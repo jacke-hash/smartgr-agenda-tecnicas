@@ -1,0 +1,10 @@
+name = "smartgr-agenda-tecnicas-email"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+[vars]
+ENVIRONMENT = "development"
+NAYRA_EMAIL = "nayra@smartgr.com.br"
+
+# Fase 2 — segredo a configurar via `wrangler secret put`:
+# RESEND_API_KEY

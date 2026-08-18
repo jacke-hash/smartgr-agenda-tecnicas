@@ -1,0 +1,74 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSmartGRUser() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.matches('.*@smartgr\\.com\\.br$');
+    }
+
+    function isJulia() {
+      return isSmartGRUser() && request.auth.token.email == 'julia@smartgr.com.br';
+    }
+
+    // Antecedência mínima calculada em America/Sao_Paulo (UTC-3 fixo, sem
+    // horário de verão desde 2019). Espelha frontend/src/utils/date-options.js
+    // (diasAntecedenciaOk) — qualquer mudança em um lado precisa refletir no
+    // outro. Único ponto de escrita real das solicitações é este (client SDK
+    // grava direto no Firestore), então é aqui que o bloqueio não pode ser
+    // burlado, mesmo chamando a REST API do Firestore diretamente.
+    function diasAntecedenciaOk(dataStr, diasMinimos) {
+      let partes = dataStr.split('-');
+      let deslocamentoMs = 3 * 60 * 60 * 1000;
+      let diaMs = 24 * 60 * 60 * 1000;
+      // timestamp.date() dá meia-noite UTC daquele dia civil; meia-noite em
+      // Brasília do MESMO dia civil é 3h depois em instante absoluto (UTC-3).
+      let alvoBrasiliaMidnightMs = timestamp.date(int(partes[0]), int(partes[1]), int(partes[2])).toMillis() + deslocamentoMs;
+      let hojeBrasiliaMidnightMs = ((request.time.toMillis() - deslocamentoMs) / diaMs) * diaMs + deslocamentoMs;
+      return alvoBrasiliaMidnightMs >= hojeBrasiliaMidnightMs + (diasMinimos * diaMs);
+    }
+
+    // Firestore Rules não suporta o macro `.all()` de lista (não é CEL
+    // completo) — indexação explícita é o jeito que realmente funciona.
+    function todasOpcoesDataOk(opcoes, diasMinimos) {
+      return opcoes is list && opcoes.size() == 4
+        && opcoes[0].data is string && diasAntecedenciaOk(opcoes[0].data, diasMinimos)
+        && opcoes[1].data is string && diasAntecedenciaOk(opcoes[1].data, diasMinimos)
+        && opcoes[2].data is string && diasAntecedenciaOk(opcoes[2].data, diasMinimos)
+        && opcoes[3].data is string && diasAntecedenciaOk(opcoes[3].data, diasMinimos);
+    }
+
+    // Só leitura para o client. Escrita (inclusive token OAuth) só via Admin SDK
+    // (workers/calendar), que ignora estas regras.
+    match /tecnicas/{id} {
+      allow read: if isSmartGRUser();
+      allow write: if false;
+    }
+
+    match /solicitacoes_consumidor_final/{id} {
+      allow read: if isSmartGRUser();
+      allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data.opcoesData, 7);
+      allow update: if isJulia();
+      allow delete: if false;
+    }
+
+    match /solicitacoes_revenda/{id} {
+      allow read: if isSmartGRUser();
+      allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data.opcoesData, 7);
+      allow update: if isJulia();
+      allow delete: if false;
+    }
+
+    match /solicitacoes_workshop/{id} {
+      allow read: if isSmartGRUser();
+      allow create: if isSmartGRUser()
+        && request.resource.data.data is string
+        && diasAntecedenciaOk(request.resource.data.data, 7);
+      allow update: if isJulia();
+      allow delete: if false;
+    }
+  }
+}

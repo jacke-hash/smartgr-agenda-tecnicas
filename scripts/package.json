@@ -1,0 +1,12 @@
+{
+  "name": "smartgr-agenda-tecnicas-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "seed:tecnicas": "node seed-tecnicas.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.3.1"
+  }
+}
