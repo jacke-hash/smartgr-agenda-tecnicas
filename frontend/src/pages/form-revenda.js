@@ -1,6 +1,6 @@
 import { collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
-import { calcularSlaUteis } from '../utils/sla.js';
+import { calcularProximoDiaUtilEquivalente } from '../utils/sla.js';
 import {
   renderDateOptionsHTML,
   coletarDateOptions,
@@ -275,7 +275,7 @@ export function renderFormRevenda(container, navigate, user) {
 
     try {
       const agora = new Date();
-      const slaExpiraEm = calcularSlaUteis(agora, 24);
+      const slaExpiraEm = calcularProximoDiaUtilEquivalente(agora);
       const precisaTransporte = transporte.get() === 'sim';
       const temSalaCursos = salaCursos.get() === 'sim';
 

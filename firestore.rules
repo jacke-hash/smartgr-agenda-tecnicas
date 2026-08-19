@@ -73,9 +73,7 @@ service cloud.firestore {
 
     match /solicitacoes_workshop/{id} {
       allow read: if isAprovador();
-      allow create: if isSmartGRUser()
-        && request.resource.data.data is string
-        && diasAntecedenciaOk(request.resource.data.data, 7);
+      allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data.opcoesData, 7);
       allow update: if isAprovador();
       allow delete: if false;
     }

@@ -1,56 +1,63 @@
-const HORA_INICIO_EXPEDIENTE = 8;
-const HORA_FIM_EXPEDIENTE = 18;
+const EXPEDIENTE_INICIO_MIN = 8 * 60 + 30; // 08:30
+const EXPEDIENTE_FIM_MIN = 17 * 60 + 30; // 17:30
 
 function ehFimDeSemana(data) {
   const dia = data.getDay();
   return dia === 0 || dia === 6;
 }
 
-function proximoInicioExpediente(data) {
+function minutosDoDia(data) {
+  return data.getHours() * 60 + data.getMinutes();
+}
+
+function proximoDiaUtil(data) {
   const d = new Date(data);
-  if (d.getHours() >= HORA_FIM_EXPEDIENTE) {
-    d.setDate(d.getDate() + 1);
-    d.setHours(HORA_INICIO_EXPEDIENTE, 0, 0, 0);
-  } else if (d.getHours() < HORA_INICIO_EXPEDIENTE) {
-    d.setHours(HORA_INICIO_EXPEDIENTE, 0, 0, 0);
-  }
-  while (ehFimDeSemana(d)) {
-    d.setDate(d.getDate() + 1);
-    d.setHours(HORA_INICIO_EXPEDIENTE, 0, 0, 0);
-  }
+  d.setDate(d.getDate() + 1);
+  while (ehFimDeSemana(d)) d.setDate(d.getDate() + 1);
   return d;
 }
 
-const MS_POR_HORA = 60 * 60 * 1000;
+function ajustarParaExpediente(dataBase) {
+  const d = new Date(dataBase);
 
-/**
- * Soma horas úteis (expediente 08h-18h, seg-sex) a uma data base.
- * @param {Date} dataBase
- * @param {number} horasUteis
- * @returns {Date}
- */
-export function calcularSlaUteis(dataBase, horasUteis) {
-  let atual = proximoInicioExpediente(dataBase);
-  let msRestantes = horasUteis * MS_POR_HORA;
-
-  while (msRestantes > 0) {
-    const fimDoDia = new Date(atual);
-    fimDoDia.setHours(HORA_FIM_EXPEDIENTE, 0, 0, 0);
-
-    const msDisponiveisHoje = fimDoDia.getTime() - atual.getTime();
-    const msAUsar = Math.min(msRestantes, msDisponiveisHoje);
-
-    atual = new Date(atual.getTime() + msAUsar);
-    msRestantes -= msAUsar;
-
-    if (msRestantes > 0) {
-      atual.setDate(atual.getDate() + 1);
-      atual.setHours(HORA_INICIO_EXPEDIENTE, 0, 0, 0);
-      while (ehFimDeSemana(atual)) {
-        atual.setDate(atual.getDate() + 1);
-      }
-    }
+  if (ehFimDeSemana(d)) {
+    do {
+      d.setDate(d.getDate() + 1);
+    } while (ehFimDeSemana(d));
+    d.setHours(8, 30, 0, 0);
+    return d;
   }
 
-  return atual;
+  const minutos = minutosDoDia(d);
+
+  if (minutos < EXPEDIENTE_INICIO_MIN) {
+    // Antes do expediente, mesmo dia útil: conta como se fosse 08:30 hoje.
+    d.setHours(8, 30, 0, 0);
+    return d;
+  }
+
+  if (minutos >= EXPEDIENTE_FIM_MIN) {
+    // Depois do expediente: conta como 08:30 do próximo dia útil.
+    const prox = new Date(d);
+    do {
+      prox.setDate(prox.getDate() + 1);
+    } while (ehFimDeSemana(prox));
+    prox.setHours(8, 30, 0, 0);
+    return prox;
+  }
+
+  return d;
+}
+
+/**
+ * SLA como "dia útil equivalente": expira no mesmo horário de criação
+ * (ajustado pra dentro do expediente 08:30-17:30 se necessário), no PRÓXIMO
+ * dia útil — não soma mais horas fracionadas de expediente acumuladas ao
+ * longo de vários dias.
+ * @param {Date} dataBase
+ * @returns {Date}
+ */
+export function calcularProximoDiaUtilEquivalente(dataBase) {
+  const referencia = ajustarParaExpediente(dataBase);
+  return proximoDiaUtil(referencia);
 }

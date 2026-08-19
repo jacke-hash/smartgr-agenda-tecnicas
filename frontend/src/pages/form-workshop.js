@@ -1,8 +1,14 @@
 import { collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
-import { calcularSlaUteis } from '../utils/sla.js';
+import { calcularProximoDiaUtilEquivalente } from '../utils/sla.js';
 import { renderEnderecoHTML, coletarEndereco } from '../utils/endereco.js';
-import { diasAntecedenciaOk, dataMinimaISO } from '../utils/date-options.js';
+import {
+  renderDateOptionsHTML,
+  coletarDateOptions,
+  dateOptionsValidas,
+  opcoesForaDoPrazo,
+  destacarOpcoesInvalidas
+} from '../utils/date-options.js';
 import { notificarNovaSolicitacao } from '../utils/notificar.js';
 
 function criarPillGroup(container, id, valorInicial, aoMudar) {
@@ -114,22 +120,12 @@ export function renderFormWorkshop(container, navigate, user) {
 
         <div class="section">
           <div class="section-title">
-            <h3>Data e horário</h3>
-            <span>workshop tem data única, sem opções alternativas</span>
+            <h3>Datas e horários de preferência</h3>
+            <span>informe 4 opções com início e término</span>
           </div>
-          <div class="field-row triple">
-            <div class="field">
-              <label>Data</label>
-              <input type="date" id="data" min="${dataMinimaISO(7)}" required />
-            </div>
-            <div class="field">
-              <label>Hora de início</label>
-              <input type="time" id="horaInicio" required />
-            </div>
-            <div class="field">
-              <label>Hora de término</label>
-              <input type="time" id="horaTermino" required />
-            </div>
+          <div class="date-options" id="date-options">${renderDateOptionsHTML()}</div>
+          <div class="advance-note">
+            ⚠️ Antecedência mínima de 7 dias a partir de hoje. Datas fora do prazo não podem ser enviadas.
           </div>
           <div id="form-error"></div>
         </div>
@@ -168,16 +164,23 @@ export function renderFormWorkshop(container, navigate, user) {
 
   const errorBox = container.querySelector('#form-error');
   const submitBtn = container.querySelector('#btn-submit');
-  const campoData = container.querySelector('#data');
+  const dateOptionsEl = container.querySelector('#date-options');
 
   container.querySelector('#form-workshop').addEventListener('submit', async (e) => {
     e.preventDefault();
     errorBox.innerHTML = '';
-    campoData.classList.remove('invalid');
 
-    if (!diasAntecedenciaOk(campoData.value, 7)) {
-      campoData.classList.add('invalid');
-      errorBox.innerHTML = `<div class="error-note">A data escolhida precisa ter no mínimo 7 dias de antecedência a partir de hoje.</div>`;
+    const opcoesData = coletarDateOptions(dateOptionsEl);
+    if (!dateOptionsValidas(opcoesData)) {
+      destacarOpcoesInvalidas(dateOptionsEl, []);
+      errorBox.innerHTML = `<div class="error-note">Preencha as 4 opções de data com início e término.</div>`;
+      return;
+    }
+
+    const forasDoPrazo = opcoesForaDoPrazo(opcoesData, 7);
+    destacarOpcoesInvalidas(dateOptionsEl, forasDoPrazo);
+    if (forasDoPrazo.length > 0) {
+      errorBox.innerHTML = `<div class="error-note">A data escolhida precisa ter no mínimo 7 dias de antecedência a partir de hoje. Corrija a(s) opção(ões) destacada(s).</div>`;
       return;
     }
 
@@ -186,7 +189,7 @@ export function renderFormWorkshop(container, navigate, user) {
 
     try {
       const agora = new Date();
-      const slaExpiraEm = calcularSlaUteis(agora, 24);
+      const slaExpiraEm = calcularProximoDiaUtilEquivalente(agora);
       const teraDemonstracaoPratica = demo.get() === 'sim';
 
       const doc = {
@@ -206,11 +209,10 @@ export function renderFormWorkshop(container, navigate, user) {
         precisaEquipamentoSmartGR: teraDemonstracaoPratica ? equipamento.get() === 'sim' : null,
         qualEquipamento: teraDemonstracaoPratica && equipamento.get() === 'sim' ? container.querySelector('#qualEquipamento').value : null,
         materialApoio: container.querySelector('#materialApoio').value || null,
-        data: container.querySelector('#data').value,
-        horaInicio: container.querySelector('#horaInicio').value,
-        horaTermino: container.querySelector('#horaTermino').value,
+        opcoesData,
         observacoes: container.querySelector('#observacoes').value,
         status: 'pendente',
+        dataEscolhida: null,
         tecnicaAtribuida: null,
         slaExpiraEm: Timestamp.fromDate(slaExpiraEm),
         criadoEm: serverTimestamp(),
@@ -222,8 +224,7 @@ export function renderFormWorkshop(container, navigate, user) {
       notificarNovaSolicitacao('workshop', {
         Instituição: doc.localInstituicao,
         Vendedor: doc.vendedorAcompanha,
-        Tema: doc.tema,
-        'Data e horário': `${doc.data} · ${doc.horaInicio} às ${doc.horaTermino}`
+        Tema: doc.tema
       });
 
       container.querySelector('.form-grid').innerHTML = `

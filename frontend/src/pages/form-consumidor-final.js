@@ -1,6 +1,6 @@
 import { collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
-import { calcularSlaUteis } from '../utils/sla.js';
+import { calcularProximoDiaUtilEquivalente } from '../utils/sla.js';
 import {
   renderDateOptionsHTML,
   coletarDateOptions,
@@ -277,7 +277,7 @@ export function renderFormConsumidorFinal(container, navigate, user) {
 
     try {
       const agora = new Date();
-      const slaExpiraEm = calcularSlaUteis(agora, 24);
+      const slaExpiraEm = calcularProximoDiaUtilEquivalente(agora);
 
       const doc = {
         tipo: 'consumidor_final',

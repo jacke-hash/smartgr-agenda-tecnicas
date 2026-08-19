@@ -99,7 +99,6 @@ function renderInfoWorkshop(item) {
       ${item.qualEquipamento ? `<div class="info-item"><span>Equipamento</span><strong>${item.qualEquipamento}</strong></div>` : ''}
       <div class="info-item"><span>Responsável local</span><strong>${item.responsavelLocal?.nome || '—'} (${item.responsavelLocal?.contato || '—'})</strong></div>
       <div class="info-item wide"><span>Endereço</span><strong>${item.endereco?.rua}, ${item.endereco?.numero} — ${item.endereco?.bairro}, ${item.endereco?.cidade}/${item.endereco?.uf}</strong></div>
-      <div class="info-item wide"><span>Data e horário</span><strong>${item.data} · ${item.horaInicio} às ${item.horaTermino}</strong></div>
     </div>
   `;
 }
@@ -163,22 +162,13 @@ export function renderPainelJulia(container) {
   }
 
   // Técnicas conflitantes numa opção de data específica (idx no array de
-  // opções checadas — pra workshop sempre idx 0, já que só tem 1 data).
+  // opções checadas — os 3 tipos têm 4 opções agora).
   function tecnicasConflitantesEm(estado, idx) {
     return tecnicas.filter((t) => estado.conflitos?.[t.id]?.[idx]).map((t) => t.nome);
   }
 
   function renderEscolhaData(item) {
     const estado = garantirEstado(item);
-
-    if (item.tipo === 'workshop') {
-      const conflitantes = tecnicasConflitantesEm(estado, 0);
-      return `
-        <div class="subhead">Data solicitada</div>
-        <p><strong>${item.data} · ${item.horaInicio} às ${item.horaTermino}</strong></p>
-        ${conflitantes.length ? `<div class="conflict-warn">⚠️ Conflito de agenda: ${conflitantes.join(', ')}</div>` : ''}
-      `;
-    }
 
     return `
       <div class="subhead">Escolha a data</div>
@@ -219,18 +209,13 @@ export function renderPainelJulia(container) {
       return;
     }
 
-    const opcoesParaChecar =
-      item.tipo === 'workshop'
-        ? [{ data: item.data, horaInicio: item.horaInicio, horaTermino: item.horaTermino }]
-        : item.opcoesData;
-
     try {
       const resp = await fetch(`${calendarWorkerUrl}/verificar-conflitos`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tecnicaIds: tecnicasConectadas.map((t) => t.id),
-          opcoesData: opcoesParaChecar
+          opcoesData: item.opcoesData
         })
       });
       const resultado = await resp.json();
@@ -253,7 +238,7 @@ export function renderPainelJulia(container) {
     const tipoLabel = TAG_TIPO[item.tipo]?.label || item.tipo;
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
 
-    const idxRelevante = item.tipo === 'workshop' ? 0 : estado.dataEscolhidaIdx;
+    const idxRelevante = estado.dataEscolhidaIdx;
     const combinacaoTemConflito =
       Boolean(estado.tecnicaId) && idxRelevante !== null && Boolean(estado.conflitos?.[estado.tecnicaId]?.[idxRelevante]);
 
@@ -300,7 +285,7 @@ export function renderPainelJulia(container) {
     const tipoLabel = TAG_TIPO[item.tipo]?.label || item.tipo;
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
     const tecnica = tecnicas.find((t) => t.id === item.tecnicaAtribuida);
-    const dataHora = item.tipo === 'workshop' ? item.data : item.dataEscolhida?.data;
+    const dataHora = item.dataEscolhida?.data;
     const statusLabel = item.status === 'aprovado' ? 'Aprovada' : 'Recusada';
 
     return `
@@ -354,31 +339,25 @@ export function renderPainelJulia(container) {
       msgEl.innerHTML = `<div class="error-note">Selecione uma técnica antes de aprovar.</div>`;
       return;
     }
-    if (item.tipo !== 'workshop' && estado.dataEscolhidaIdx === null) {
+    if (estado.dataEscolhidaIdx === null) {
       msgEl.innerHTML = `<div class="error-note">Escolha uma das datas propostas antes de aprovar.</div>`;
       return;
     }
 
-    const idxRelevante = item.tipo === 'workshop' ? 0 : estado.dataEscolhidaIdx;
+    const idxRelevante = estado.dataEscolhidaIdx;
     if (estado.conflitos?.[estado.tecnicaId]?.[idxRelevante]) {
       msgEl.innerHTML = `<div class="error-note">⚠️ Técnica selecionada tem conflito de agenda nesse horário. Escolha outra técnica ou data.</div>`;
       return;
     }
 
-    const dataHora =
-      item.tipo === 'workshop'
-        ? { data: item.data, horaInicio: item.horaInicio, horaTermino: item.horaTermino }
-        : item.opcoesData[estado.dataEscolhidaIdx];
+    const dataHora = item.opcoesData[estado.dataEscolhidaIdx];
 
     const payload = {
       status: 'aprovado',
       tecnicaAtribuida: estado.tecnicaId,
+      dataEscolhida: dataHora,
       aprovadoEm: serverTimestamp()
     };
-
-    if (item.tipo !== 'workshop') {
-      payload.dataEscolhida = dataHora;
-    }
 
     await updateDoc(doc(db, item._colecao, item._id), payload);
 
