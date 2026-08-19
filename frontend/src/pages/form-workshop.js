@@ -1,6 +1,6 @@
 import { collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
-import { calcularProximoDiaUtilEquivalente } from '../utils/sla.js';
+import { calcularSlaExpiraEm } from '../utils/sla.js';
 import { renderEnderecoHTML, coletarEndereco } from '../utils/endereco.js';
 import {
   renderDateOptionsHTML,
@@ -29,7 +29,7 @@ export function renderFormWorkshop(container, navigate, user) {
     <button class="back-link" id="btn-voltar">← Voltar</button>
     <div class="page-head">
       <h1>Solicitar Workshop</h1>
-      <p>Ação institucional em faculdades, eventos ou instituições de ensino. A Julia tem até 24h úteis para revisar.</p>
+      <p>Ação institucional em faculdades, eventos ou instituições de ensino. A Julia tem até 24h para revisar.</p>
     </div>
 
     <div class="form-grid">
@@ -136,13 +136,13 @@ export function renderFormWorkshop(container, navigate, user) {
       <div>
         <div class="sla-card workshop">
           <div class="badge"><span class="dot"></span> SLA ativo</div>
-          <h4>Julia tem até 24h úteis</h4>
+          <h4>Julia tem até 24h</h4>
           <p>para revisar a solicitação e atribuir a técnica responsável.</p>
         </div>
         <div class="timeline">
           <h4>Como funciona</h4>
           <div class="tl-item done"><div class="tl-dot">✓</div><div class="tl-text"><strong>Solicitação enviada</strong><span>Vendedor preenche o formulário</span></div></div>
-          <div class="tl-item"><div class="tl-dot">2</div><div class="tl-text"><strong>Julia revisa (até 24h úteis)</strong><span>Atribui a técnica</span></div></div>
+          <div class="tl-item"><div class="tl-dot">2</div><div class="tl-text"><strong>Julia revisa (até 24h)</strong><span>Atribui a técnica</span></div></div>
           <div class="tl-item"><div class="tl-dot">3</div><div class="tl-text"><strong>Google Agenda atualizada</strong><span>Evento criado na agenda da técnica</span></div></div>
           <div class="tl-item"><div class="tl-dot">4</div><div class="tl-text"><strong>Vendedor notificado</strong><span>Técnica confirmada</span></div></div>
         </div>
@@ -189,7 +189,7 @@ export function renderFormWorkshop(container, navigate, user) {
 
     try {
       const agora = new Date();
-      const slaExpiraEm = calcularProximoDiaUtilEquivalente(agora);
+      const slaExpiraEm = calcularSlaExpiraEm(agora);
       const teraDemonstracaoPratica = demo.get() === 'sim';
 
       const doc = {
@@ -228,7 +228,7 @@ export function renderFormWorkshop(container, navigate, user) {
       });
 
       container.querySelector('.form-grid').innerHTML = `
-        <div class="success-note">✓ Solicitação enviada com sucesso. A Julia vai revisar em até 24h úteis.</div>
+        <div class="success-note">✓ Solicitação enviada com sucesso. A Julia vai revisar em até 24h.</div>
       `;
     } catch (err) {
       errorBox.innerHTML = `<div class="error-note">Erro ao enviar solicitação: ${err.message}</div>`;
