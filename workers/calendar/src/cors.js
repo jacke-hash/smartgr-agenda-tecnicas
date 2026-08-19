@@ -1,10 +1,12 @@
 const ALLOWED_ORIGIN_PATTERNS = [
   /^https:\/\/smartgr-agenda-tecnicas\.pages\.dev$/,
   /^https:\/\/[a-z0-9-]+\.smartgr-agenda-tecnicas\.pages\.dev$/, // preview deployments
+  /^https:\/\/agendatecnica\.smartgr\.com\.br$/,
+  /^https:\/\/www\.agendatecnica\.smartgr\.com\.br$/,
   /^http:\/\/localhost:\d+$/
 ];
 
-const ORIGEM_PADRAO = 'https://smartgr-agenda-tecnicas.pages.dev';
+const ORIGEM_PADRAO = 'https://agendatecnica.smartgr.com.br';
 
 export function corsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
