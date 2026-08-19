@@ -202,12 +202,20 @@ export function renderPainelJulia(container) {
 
   async function checarConflitos(item) {
     const estado = garantirEstado(item);
-    if (estado.conflitos) return; // já checado (ou já sabido que não dá pra checar)
+    // Guarda contra reexecução depois de já ter um resultado E contra chamadas
+    // concorrentes em andamento (onSnapshot dispara mais de uma vez pro mesmo
+    // write — uma local otimista, outra quando o servidor confirma — e sem
+    // esse segundo guard, duas chamadas paralelas para o mesmo item podem
+    // resolver fora de ordem: se a que falha resolve depois da que funcionou,
+    // ela sobrescreve o resultado bom com {} e o aviso "some sozinho").
+    if (estado.conflitos || estado.conflitosEmAndamento) return;
+    estado.conflitosEmAndamento = true;
 
     const tecnicasConectadas = tecnicas.filter((t) => t.refreshTokenEncrypted);
     const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
     if (tecnicasConectadas.length === 0 || !calendarWorkerUrl) {
       estado.conflitos = {};
+      estado.conflitosEmAndamento = false;
       return;
     }
 
@@ -230,6 +238,8 @@ export function renderPainelJulia(container) {
     } catch (err) {
       console.error('Falha ao verificar conflitos de agenda:', err);
       estado.conflitos = {};
+    } finally {
+      estado.conflitosEmAndamento = false;
     }
 
     renderFila();
@@ -488,6 +498,7 @@ export function renderPainelJulia(container) {
       const item = pendentes.find((p) => p._id === itemId);
       select.addEventListener('change', () => {
         garantirEstado(item).tecnicaId = select.value;
+        renderFila();
       });
     });
 
