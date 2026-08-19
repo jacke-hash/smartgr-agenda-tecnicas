@@ -54,22 +54,25 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Read (get + list) só pra quem aprova — vendedor não enxerga a fila
+    // alheia, só grava a própria solicitação (create continua aberto pra
+    // qualquer @smartgr.com.br, é o formulário público de solicitação).
     match /solicitacoes_consumidor_final/{id} {
-      allow read: if isSmartGRUser();
+      allow read: if isAprovador();
       allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data.opcoesData, 7);
       allow update: if isAprovador();
       allow delete: if false;
     }
 
     match /solicitacoes_revenda/{id} {
-      allow read: if isSmartGRUser();
+      allow read: if isAprovador();
       allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data.opcoesData, 7);
       allow update: if isAprovador();
       allow delete: if false;
     }
 
     match /solicitacoes_workshop/{id} {
-      allow read: if isSmartGRUser();
+      allow read: if isAprovador();
       allow create: if isSmartGRUser()
         && request.resource.data.data is string
         && diasAntecedenciaOk(request.resource.data.data, 7);

@@ -22,6 +22,14 @@ function navigate(rota) {
   window.location.hash = rota;
 }
 
+// Mesma dupla usada em firestore.rules (isAprovador) — Jacke como admin
+// master, Julia como aprovadora natural do fluxo.
+const ADMINS_PAINEL = ['julia@smartgr.com.br', 'jacke@smartgr.com.br'];
+
+function podeVerPainel(user) {
+  return Boolean(user?.email) && ADMINS_PAINEL.includes(user.email.toLowerCase());
+}
+
 function renderShell(user) {
   app.innerHTML = `
     <div class="topbar">
@@ -29,7 +37,7 @@ function renderShell(user) {
       <div class="topbar-right">
         <div class="view-switch">
           <button data-rota="#/">Nova solicitação</button>
-          <button data-rota="#/painel">Painel — Julia</button>
+          ${podeVerPainel(user) ? `<button data-rota="#/painel">Painel — Julia</button>` : ''}
         </div>
         <div class="user-chip">
           ${user.photoURL ? `<img src="${user.photoURL}" alt="" />` : ''}
@@ -62,12 +70,19 @@ function renderRotaAtual(user) {
     cleanupRotaAtual = null;
   }
 
+  const rotaBase = rota.split('?')[0];
+
+  if (rotaBase === '#/painel' && !podeVerPainel(user)) {
+    navigate('#/');
+    return;
+  }
+
   const switchButtons = app.querySelectorAll('.view-switch button');
   switchButtons.forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.rota === rota || (rota.startsWith('#/') && btn.dataset.rota === '#/' && !['#/painel'].includes(rota)));
   });
 
-  const renderer = ROUTES[rota.split('?')[0]] || renderLanding;
+  const renderer = ROUTES[rotaBase] || renderLanding;
   pageContent.innerHTML = '';
   cleanupRotaAtual = renderer(pageContent, navigate, user) || null;
 }
