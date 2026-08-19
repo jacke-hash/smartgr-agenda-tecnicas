@@ -2,7 +2,7 @@ import { collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firesto
 import { db } from '../firebase-config.js';
 import { calcularSlaUteis } from '../utils/sla.js';
 import { renderEnderecoHTML, coletarEndereco } from '../utils/endereco.js';
-import { diasAntecedenciaOk } from '../utils/date-options.js';
+import { diasAntecedenciaOk, dataMinimaISO } from '../utils/date-options.js';
 import { notificarNovaSolicitacao } from '../utils/notificar.js';
 
 function criarPillGroup(container, id, valorInicial, aoMudar) {
@@ -120,7 +120,7 @@ export function renderFormWorkshop(container, navigate, user) {
           <div class="field-row triple">
             <div class="field">
               <label>Data</label>
-              <input type="date" id="data" required />
+              <input type="date" id="data" min="${dataMinimaISO(7)}" required />
             </div>
             <div class="field">
               <label>Hora de início</label>

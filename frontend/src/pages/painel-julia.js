@@ -9,7 +9,7 @@ import {
   getDocs
 } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
-import { notificarAprovacao } from '../utils/notificar.js';
+import { notificarAprovacao, notificarRecusa } from '../utils/notificar.js';
 
 const COLECOES = ['solicitacoes_consumidor_final', 'solicitacoes_revenda', 'solicitacoes_workshop'];
 
@@ -162,33 +162,90 @@ export function renderPainelJulia(container) {
     return '';
   }
 
+  // Técnicas conflitantes numa opção de data específica (idx no array de
+  // opções checadas — pra workshop sempre idx 0, já que só tem 1 data).
+  function tecnicasConflitantesEm(estado, idx) {
+    return tecnicas.filter((t) => estado.conflitos?.[t.id]?.[idx]).map((t) => t.nome);
+  }
+
   function renderEscolhaData(item) {
-    if (item.tipo === 'workshop') {
-      return `<div class="subhead">Data solicitada</div><p><strong>${item.data} · ${item.horaInicio} às ${item.horaTermino}</strong></p>`;
-    }
     const estado = garantirEstado(item);
+
+    if (item.tipo === 'workshop') {
+      const conflitantes = tecnicasConflitantesEm(estado, 0);
+      return `
+        <div class="subhead">Data solicitada</div>
+        <p><strong>${item.data} · ${item.horaInicio} às ${item.horaTermino}</strong></p>
+        ${conflitantes.length ? `<div class="conflict-warn">⚠️ Conflito de agenda: ${conflitantes.join(', ')}</div>` : ''}
+      `;
+    }
+
     return `
       <div class="subhead">Escolha a data</div>
       <div class="date-pick-grid" data-escolha-data="${item._id}">
         ${(item.opcoesData || [])
-          .map(
-            (opt, idx) => `
+          .map((opt, idx) => {
+            const conflitantes = tecnicasConflitantesEm(estado, idx);
+            return `
           <div class="date-pick ${estado.dataEscolhidaIdx === idx ? 'chosen' : ''}" data-idx="${idx}">
             <div class="d">${opt.data}</div>
             <div class="t">${opt.horaInicio} - ${opt.horaTermino}</div>
             <div class="check">✓ escolhida</div>
+            ${conflitantes.length ? `<div class="conflict-warn">⚠️ ${conflitantes.join(', ')}</div>` : ''}
           </div>
-        `
-          )
+        `;
+          })
           .join('')}
       </div>
     `;
   }
 
+  async function checarConflitos(item) {
+    const estado = garantirEstado(item);
+    if (estado.conflitos) return; // já checado (ou já sabido que não dá pra checar)
+
+    const tecnicasConectadas = tecnicas.filter((t) => t.refreshTokenEncrypted);
+    const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
+    if (tecnicasConectadas.length === 0 || !calendarWorkerUrl) {
+      estado.conflitos = {};
+      return;
+    }
+
+    const opcoesParaChecar =
+      item.tipo === 'workshop'
+        ? [{ data: item.data, horaInicio: item.horaInicio, horaTermino: item.horaTermino }]
+        : item.opcoesData;
+
+    try {
+      const resp = await fetch(`${calendarWorkerUrl}/verificar-conflitos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tecnicaIds: tecnicasConectadas.map((t) => t.id),
+          opcoesData: opcoesParaChecar
+        })
+      });
+      const resultado = await resp.json();
+      estado.conflitos = resp.ok ? resultado.conflitos || {} : {};
+    } catch (err) {
+      console.error('Falha ao verificar conflitos de agenda:', err);
+      estado.conflitos = {};
+    }
+
+    renderFila();
+  }
+
   function renderCard(item) {
+    checarConflitos(item); // fire-and-forget, guardado internamente contra recheck
+
+    const estado = garantirEstado(item);
     const countdown = formatCountdown(item.slaExpiraEm);
     const tipoLabel = TAG_TIPO[item.tipo]?.label || item.tipo;
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
+
+    const idxRelevante = item.tipo === 'workshop' ? 0 : estado.dataEscolhidaIdx;
+    const combinacaoTemConflito =
+      Boolean(estado.tecnicaId) && idxRelevante !== null && Boolean(estado.conflitos?.[estado.tecnicaId]?.[idxRelevante]);
 
     return `
       <div class="request-card" data-item-id="${item._id}">
@@ -209,12 +266,18 @@ export function renderPainelJulia(container) {
               <label>Técnica responsável</label>
               <select data-select-tecnica="${item._id}">
                 <option value="">Selecione...</option>
-                ${tecnicas.map((t) => `<option value="${t.id}" ${garantirEstado(item).tecnicaId === t.id ? 'selected' : ''}>${t.nome}</option>`).join('')}
+                ${tecnicas
+                  .map((t) => {
+                    const temConflito = idxRelevante !== null && estado.conflitos?.[t.id]?.[idxRelevante];
+                    return `<option value="${t.id}" ${estado.tecnicaId === t.id ? 'selected' : ''}>${t.nome}${temConflito ? ' ⚠️ conflito' : ''}</option>`;
+                  })
+                  .join('')}
               </select>
             </div>
           </div>
+          ${combinacaoTemConflito ? `<div class="error-note">⚠️ Técnica selecionada tem conflito de agenda nesse horário. Escolha outra técnica ou data.</div>` : ''}
           <div class="action-row">
-            <button class="btn btn-approve" data-aprovar="${item._id}">Aprovar e atribuir</button>
+            <button class="btn btn-approve" data-aprovar="${item._id}" ${combinacaoTemConflito ? 'disabled' : ''}>Aprovar e atribuir</button>
             <button class="btn btn-decline" data-recusar="${item._id}">Recusar</button>
           </div>
           <div id="msg-${item._id}"></div>
@@ -285,6 +348,12 @@ export function renderPainelJulia(container) {
       return;
     }
 
+    const idxRelevante = item.tipo === 'workshop' ? 0 : estado.dataEscolhidaIdx;
+    if (estado.conflitos?.[estado.tecnicaId]?.[idxRelevante]) {
+      msgEl.innerHTML = `<div class="error-note">⚠️ Técnica selecionada tem conflito de agenda nesse horário. Escolha outra técnica ou data.</div>`;
+      return;
+    }
+
     const dataHora =
       item.tipo === 'workshop'
         ? { data: item.data, horaInicio: item.horaInicio, horaTermino: item.horaTermino }
@@ -338,6 +407,22 @@ export function renderPainelJulia(container) {
     }
 
     if (item.vendedorEmail) {
+      // Só os campos preenchidos pelo vendedor no formulário original — exclui
+      // metadados internos (_id/_colecao) e Timestamps do Firestore, que não
+      // servem pro corpo do e-mail e não serializam bem em JSON.
+      const {
+        _id,
+        _colecao,
+        criadoEm,
+        slaExpiraEm,
+        aprovadoEm,
+        tecnicaAtribuida,
+        status,
+        opcoesData,
+        dataEscolhida,
+        ...solicitacaoParaEmail
+      } = item;
+
       notificarAprovacao({
         vendedorEmail: item.vendedorEmail,
         vendedorNome: nomeSolicitante,
@@ -345,8 +430,10 @@ export function renderPainelJulia(container) {
         tipoTreinamento: item.tipoTreinamento || null,
         modalidade,
         tecnicaNome: tecnica?.nome || '—',
+        tecnicaEmail: tecnica?.email || null,
         dataHora,
-        endereco
+        endereco,
+        solicitacao: solicitacaoParaEmail
       });
     }
   }
@@ -356,6 +443,14 @@ export function renderPainelJulia(container) {
       status: 'recusado',
       aprovadoEm: serverTimestamp()
     });
+
+    if (item.vendedorEmail) {
+      notificarRecusa({
+        vendedorEmail: item.vendedorEmail,
+        vendedorNome: item.vendedor || item.vendedorAcompanha || '—',
+        tipo: item.tipo
+      });
+    }
   }
 
   function renderFila() {

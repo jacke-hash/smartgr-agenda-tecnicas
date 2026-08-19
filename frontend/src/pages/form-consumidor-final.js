@@ -66,7 +66,7 @@ export function renderFormConsumidorFinal(container, navigate, user) {
             </div>
             <div class="field">
               <label>Número de série</label>
-              <input type="text" id="numeroSerie" placeholder="Ex: SGR-2026-0451" required />
+              <input type="text" id="numeroSerie" placeholder="Ex: SGR-2026-0451" />
             </div>
           </div>
           <div class="field-row single">

@@ -1,4 +1,5 @@
-export function renderDateOptionsHTML(containerId) {
+export function renderDateOptionsHTML(containerId, diasMinimos = 7) {
+  const min = dataMinimaISO(diasMinimos);
   const labels = ['Opção 1', 'Opção 2', 'Opção 3', 'Opção 4'];
   return labels
     .map(
@@ -6,7 +7,7 @@ export function renderDateOptionsHTML(containerId) {
     <div class="date-option" data-idx="${i}">
       <span class="opt-label">${label}</span>
       <div class="row">
-        <input type="date" data-idx="${i}" data-field="data" required />
+        <input type="date" data-idx="${i}" data-field="data" min="${min}" required />
         <div class="time-pair">
           <span>Início</span>
           <input type="time" data-idx="${i}" data-field="horaInicio" required />
@@ -48,6 +49,14 @@ export function dateOptionsValidas(opcoes) {
 // mudança aqui precisa refletir lá também.
 function hojeBrasiliaISO() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+}
+
+// Valor pro atributo `min` de <input type="date"> — trava física além da
+// validação em JS/rules. Meio-dia UTC evita virar de dia por causa de fuso.
+export function dataMinimaISO(diasMinimos = 7) {
+  const d = new Date(`${hojeBrasiliaISO()}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + diasMinimos);
+  return d.toISOString().slice(0, 10);
 }
 
 export function diasAntecedenciaOk(dataStr, diasMinimos = 7, hojeStr = hojeBrasiliaISO()) {

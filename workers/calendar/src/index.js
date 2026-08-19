@@ -54,24 +54,33 @@ async function handleOauthCallback(url, env, headers) {
   if (!code) return redirectParaFrontend(state.origin, 'erro', 'sem_code');
 
   try {
+    console.log('oauth/callback: trocando code por tokens...');
     const tokens = await exchangeCodeForTokens(env, code);
+    console.log('oauth/callback: tokens recebidos, tem refresh_token?', Boolean(tokens.refresh_token));
     if (!tokens.refresh_token) {
       return redirectParaFrontend(state.origin, 'erro', 'sem_refresh_token');
     }
 
+    console.log('oauth/callback: buscando userinfo...');
     const userInfo = await getGoogleUserInfo(tokens.access_token);
+    console.log('oauth/callback: userinfo recebido, email:', userInfo.email, 'verified:', userInfo.email_verified);
     if (!userInfo.email || !userInfo.email_verified || !userInfo.email.endsWith('@smartgr.com.br')) {
       return redirectParaFrontend(state.origin, 'erro', 'conta_invalida');
     }
 
+    console.log('oauth/callback: buscando técnica no Firestore por email...');
     const tecnica = await findTecnicaByEmail(env, userInfo.email);
+    console.log('oauth/callback: técnica encontrada?', Boolean(tecnica), tecnica?.id);
     if (!tecnica) return redirectParaFrontend(state.origin, 'erro', 'tecnica_nao_encontrada');
 
+    console.log('oauth/callback: criptografando refresh token e gravando no Firestore...');
     const refreshTokenEncrypted = await encryptSecret(tokens.refresh_token, env.TOKEN_ENCRYPTION_KEY);
     await patchTecnica(env, tecnica.id, { refreshTokenEncrypted, conectadoEm: new Date() });
+    console.log('oauth/callback: sucesso, técnica atualizada.');
 
     return redirectParaFrontend(state.origin, 'sucesso');
   } catch (err) {
+    console.error('oauth/callback: exceção não tratada:', err.stack || err.message || err);
     return redirectParaFrontend(state.origin, 'erro', 'falha_interna');
   }
 }
@@ -134,6 +143,77 @@ async function handleCriarEvento(request, env, headers) {
   return json({ status: 'ok', eventId: evento.id, htmlLink: evento.htmlLink }, 200, headers);
 }
 
+function offsetBrasilia(dataHora, campoHora) {
+  return new Date(`${dataHora.data}T${dataHora[campoHora]}:00-03:00`).getTime();
+}
+
+// Uma chamada freeBusy por técnica cobrindo o intervalo [menor início, maior
+// término] entre todas as opções de data — mais barato que uma chamada por
+// combinação técnica×data. Overlap é checado localmente depois.
+async function verificarConflitosTecnica(env, tecnica, opcoesData) {
+  const refreshToken = await decryptSecret(tecnica.refreshTokenEncrypted, env.TOKEN_ENCRYPTION_KEY);
+  const { access_token: accessToken } = await refreshAccessToken(env, refreshToken);
+
+  const inicios = opcoesData.map((o) => offsetBrasilia(o, 'horaInicio'));
+  const fins = opcoesData.map((o) => offsetBrasilia(o, 'horaTermino'));
+  const timeMin = new Date(Math.min(...inicios)).toISOString();
+  const timeMax = new Date(Math.max(...fins)).toISOString();
+
+  const resp = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ timeMin, timeMax, items: [{ id: 'primary' }] })
+  });
+
+  if (!resp.ok) {
+    console.error(`verificar-conflitos: freeBusy falhou pra técnica ${tecnica.id}:`, resp.status, await resp.text());
+    return null;
+  }
+
+  const data = await resp.json();
+  const ocupado = data.calendars?.primary?.busy || [];
+
+  return opcoesData.map((o) => {
+    const inicioMs = offsetBrasilia(o, 'horaInicio');
+    const fimMs = offsetBrasilia(o, 'horaTermino');
+    return ocupado.some((b) => {
+      const bInicio = new Date(b.start).getTime();
+      const bFim = new Date(b.end).getTime();
+      return inicioMs < bFim && fimMs > bInicio;
+    });
+  });
+}
+
+async function handleVerificarConflitos(request, env, headers) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ status: 'error', message: 'body inválido' }, 400, headers);
+  }
+
+  const { tecnicaIds, opcoesData } = body;
+  if (!Array.isArray(tecnicaIds) || !Array.isArray(opcoesData) || opcoesData.length === 0) {
+    return json({ status: 'error', message: 'tecnicaIds e opcoesData são obrigatórios' }, 400, headers);
+  }
+
+  const entradas = await Promise.all(
+    tecnicaIds.map(async (tecnicaId) => {
+      try {
+        const tecnica = await getTecnica(env, tecnicaId);
+        if (!tecnica || !tecnica.refreshTokenEncrypted) return [tecnicaId, null];
+        return [tecnicaId, await verificarConflitosTecnica(env, tecnica, opcoesData)];
+      } catch (err) {
+        console.error(`verificar-conflitos: falha pra técnica ${tecnicaId}:`, err.message);
+        return [tecnicaId, null];
+      }
+    })
+  );
+
+  const conflitos = Object.fromEntries(entradas.filter(([, v]) => v !== null));
+  return json({ status: 'ok', conflitos }, 200, headers);
+}
+
 export default {
   async fetch(request, env) {
     const preflight = handlePreflight(request);
@@ -159,6 +239,15 @@ export default {
         return await handleCriarEvento(request, env, headers);
       } catch (err) {
         console.error('criar-evento: exceção não tratada:', err.stack || err.message || err);
+        return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
+      }
+    }
+
+    if (url.pathname === '/verificar-conflitos' && request.method === 'POST') {
+      try {
+        return await handleVerificarConflitos(request, env, headers);
+      } catch (err) {
+        console.error('verificar-conflitos: exceção não tratada:', err.stack || err.message || err);
         return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
       }
     }
