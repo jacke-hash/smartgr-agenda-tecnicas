@@ -5,6 +5,7 @@
 import { buildGoogleAuthUrl, exchangeCodeForTokens, refreshAccessToken, getGoogleUserInfo } from './googleAuth.js';
 import { findTecnicaByEmail, getTecnica, patchTecnica } from './firestoreRest.js';
 import { encryptSecret, decryptSecret, signState, verifyState } from './crypto.js';
+import { corsHeaders, handlePreflight } from './cors.js';
 
 const STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
@@ -14,8 +15,8 @@ const TIPO_LABEL = {
   workshop: 'Workshop'
 };
 
-function json(data, status = 200) {
-  return Response.json(data, { status });
+function json(data, status, headers) {
+  return Response.json(data, { status: status || 200, headers });
 }
 
 function redirectParaFrontend(origin, status, motivo) {
@@ -36,18 +37,18 @@ function formatEndereco(endereco) {
     .join(' — ');
 }
 
-async function handleOauthIniciar(url, env) {
+async function handleOauthIniciar(url, env, headers) {
   const origin = url.searchParams.get('origin');
-  if (!origin) return json({ status: 'error', message: 'origin é obrigatório' }, 400);
+  if (!origin) return json({ status: 'error', message: 'origin é obrigatório' }, 400, headers);
 
   const state = await signState({ origin, ts: Date.now() }, env.TOKEN_ENCRYPTION_KEY);
   return Response.redirect(buildGoogleAuthUrl(env, state), 302);
 }
 
-async function handleOauthCallback(url, env) {
+async function handleOauthCallback(url, env, headers) {
   const stateToken = url.searchParams.get('state');
   const state = await verifyState(stateToken, env.TOKEN_ENCRYPTION_KEY, STATE_MAX_AGE_MS);
-  if (!state) return json({ status: 'error', message: 'state inválido ou expirado' }, 400);
+  if (!state) return json({ status: 'error', message: 'state inválido ou expirado' }, 400, headers);
 
   const code = url.searchParams.get('code');
   if (!code) return redirectParaFrontend(state.origin, 'erro', 'sem_code');
@@ -75,27 +76,29 @@ async function handleOauthCallback(url, env) {
   }
 }
 
-async function handleCriarEvento(request, env) {
+async function handleCriarEvento(request, env, headers) {
   let body;
   try {
     body = await request.json();
   } catch {
-    return json({ status: 'error', message: 'body inválido' }, 400);
+    return json({ status: 'error', message: 'body inválido' }, 400, headers);
   }
 
   const { tecnicaId, tipo, tipoTreinamento, modalidade, endereco, nomeSolicitante, dataHora } = body;
   if (!tecnicaId || !tipo || !nomeSolicitante || !dataHora?.data || !dataHora?.horaInicio || !dataHora?.horaTermino) {
-    return json({ status: 'error', message: 'campos obrigatórios ausentes' }, 400);
+    return json({ status: 'error', message: 'campos obrigatórios ausentes' }, 400, headers);
   }
 
   const tecnica = await getTecnica(env, tecnicaId);
-  if (!tecnica) return json({ status: 'error', message: 'técnica não encontrada' }, 404);
+  if (!tecnica) return json({ status: 'error', message: 'técnica não encontrada' }, 404, headers);
   if (!tecnica.refreshTokenEncrypted) {
-    return json({ status: 'error', message: 'técnica ainda não conectou a agenda' }, 409);
+    return json({ status: 'error', message: 'técnica ainda não conectou a agenda' }, 409, headers);
   }
 
   const refreshToken = await decryptSecret(tecnica.refreshTokenEncrypted, env.TOKEN_ENCRYPTION_KEY);
+  console.log('criar-evento: refresh token decriptado, trocando por access token...');
   const { access_token: accessToken } = await refreshAccessToken(env, refreshToken);
+  console.log('criar-evento: access token obtido, chamando Calendar API...');
 
   const tipoLabel = TIPO_LABEL[tipo] || tipo;
   const location = modalidade === 'online' ? 'Online' : formatEndereco(endereco) || 'A confirmar';
@@ -121,37 +124,45 @@ async function handleCriarEvento(request, env) {
   });
 
   if (!resp.ok) {
-    return json({ status: 'error', message: `Falha ao criar evento: ${await resp.text()}` }, 502);
+    const corpoErro = await resp.text();
+    console.error(`criar-evento: Calendar API respondeu ${resp.status}`, corpoErro, 'eventBody enviado:', JSON.stringify(eventBody));
+    return json({ status: 'error', message: `Falha ao criar evento: ${corpoErro}` }, 502, headers);
   }
 
   const evento = await resp.json();
-  return json({ status: 'ok', eventId: evento.id, htmlLink: evento.htmlLink });
+  console.log('criar-evento: evento criado com sucesso', evento.id);
+  return json({ status: 'ok', eventId: evento.id, htmlLink: evento.htmlLink }, 200, headers);
 }
 
 export default {
   async fetch(request, env) {
+    const preflight = handlePreflight(request);
+    if (preflight) return preflight;
+
     const url = new URL(request.url);
+    const headers = corsHeaders(request);
 
     if (url.pathname === '/health') {
-      return json({ status: 'ok', worker: 'smartgr-agenda-tecnicas-calendar' });
+      return json({ status: 'ok', worker: 'smartgr-agenda-tecnicas-calendar' }, 200, headers);
     }
 
     if (url.pathname === '/oauth/iniciar' && request.method === 'GET') {
-      return handleOauthIniciar(url, env);
+      return handleOauthIniciar(url, env, headers);
     }
 
     if (url.pathname === '/oauth/callback' && request.method === 'GET') {
-      return handleOauthCallback(url, env);
+      return handleOauthCallback(url, env, headers);
     }
 
     if (url.pathname === '/criar-evento' && request.method === 'POST') {
       try {
-        return await handleCriarEvento(request, env);
+        return await handleCriarEvento(request, env, headers);
       } catch (err) {
-        return json({ status: 'error', message: err.message || 'erro interno' }, 500);
+        console.error('criar-evento: exceção não tratada:', err.stack || err.message || err);
+        return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
       }
     }
 
-    return json({ status: 'not_implemented', message: 'Rota não encontrada.' }, 501);
+    return json({ status: 'not_implemented', message: 'Rota não encontrada.' }, 501, headers);
   }
 };

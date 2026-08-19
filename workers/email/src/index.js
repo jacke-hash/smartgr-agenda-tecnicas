@@ -3,14 +3,16 @@
  * Todo o conteúdo do e-mail vem no body da requisição — este worker não
  * acessa Firestore, só formata e dispara via Resend.
  */
+import { corsHeaders, handlePreflight } from './cors.js';
+
 const TIPO_LABEL = {
   consumidor_final: 'Consumidor Final',
   revenda: 'Revenda',
   workshop: 'Workshop'
 };
 
-function json(data, status = 200) {
-  return Response.json(data, { status });
+function json(data, status, headers) {
+  return Response.json(data, { status: status || 200, headers });
 }
 
 function formatEndereco(endereco) {
@@ -45,10 +47,10 @@ async function enviarEmail(env, { to, subject, html }) {
   }
 }
 
-async function handleNotificarNovaSolicitacao(request, env) {
+async function handleNotificarNovaSolicitacao(request, env, headers) {
   const body = await request.json();
   const { tipo, resumo, painelUrl } = body;
-  if (!tipo || !resumo) return json({ status: 'error', message: 'tipo e resumo são obrigatórios' }, 400);
+  if (!tipo || !resumo) return json({ status: 'error', message: 'tipo e resumo são obrigatórios' }, 400, headers);
 
   const tipoLabel = TIPO_LABEL[tipo] || tipo;
   const linhas = Object.entries(resumo)
@@ -66,15 +68,19 @@ async function handleNotificarNovaSolicitacao(request, env) {
     `
   });
 
-  return json({ status: 'ok' });
+  return json({ status: 'ok' }, 200, headers);
 }
 
-async function handleNotificarAprovacao(request, env) {
+async function handleNotificarAprovacao(request, env, headers) {
   const body = await request.json();
   const { vendedorEmail, vendedorNome, tipo, tipoTreinamento, modalidade, tecnicaNome, dataHora, endereco } = body;
 
   if (!vendedorEmail || !tipo || !tecnicaNome || !dataHora) {
-    return json({ status: 'error', message: 'vendedorEmail, tipo, tecnicaNome e dataHora são obrigatórios' }, 400);
+    return json(
+      { status: 'error', message: 'vendedorEmail, tipo, tecnicaNome e dataHora são obrigatórios' },
+      400,
+      headers
+    );
   }
 
   const tipoLabel = TIPO_LABEL[tipo] || tipo;
@@ -110,28 +116,32 @@ async function handleNotificarAprovacao(request, env) {
     });
   }
 
-  return json({ status: 'ok' });
+  return json({ status: 'ok' }, 200, headers);
 }
 
 export default {
   async fetch(request, env) {
+    const preflight = handlePreflight(request);
+    if (preflight) return preflight;
+
     const url = new URL(request.url);
+    const headers = corsHeaders(request);
 
     if (url.pathname === '/health') {
-      return json({ status: 'ok', worker: 'smartgr-agenda-tecnicas-email' });
+      return json({ status: 'ok', worker: 'smartgr-agenda-tecnicas-email' }, 200, headers);
     }
 
     try {
       if (url.pathname === '/notificar-nova-solicitacao' && request.method === 'POST') {
-        return await handleNotificarNovaSolicitacao(request, env);
+        return await handleNotificarNovaSolicitacao(request, env, headers);
       }
       if (url.pathname === '/notificar-aprovacao' && request.method === 'POST') {
-        return await handleNotificarAprovacao(request, env);
+        return await handleNotificarAprovacao(request, env, headers);
       }
     } catch (err) {
-      return json({ status: 'error', message: err.message || 'erro interno' }, 500);
+      return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
     }
 
-    return json({ status: 'not_implemented', message: 'Rota não encontrada.' }, 501);
+    return json({ status: 'not_implemented', message: 'Rota não encontrada.' }, 501, headers);
   }
 };

@@ -104,22 +104,34 @@ function renderInfoWorkshop(item) {
   `;
 }
 
+const ABAS = [
+  { id: 'pendente', label: 'Pendentes' },
+  { id: 'aprovado', label: 'Aprovadas' },
+  { id: 'recusado', label: 'Recusadas' }
+];
+
 export function renderPainelJulia(container) {
   container.innerHTML = `
     <div class="page-head">
       <h1>Painel — Julia</h1>
-      <p>Fila única de solicitações pendentes das 3 origens, ordenadas por data de criação.</p>
+      <p>Fila única de solicitações das 3 origens, ordenadas por data.</p>
     </div>
-    <div class="queue" id="queue"><div class="loading-state">Carregando solicitações...</div></div>
+    <div class="view-switch" id="painel-tabs">
+      ${ABAS.map((a) => `<button data-aba="${a.id}" class="${a.id === 'pendente' ? 'active' : ''}">${a.label}</button>`).join('')}
+    </div>
+    <div class="queue" id="queue" style="margin-top:16px;"><div class="loading-state">Carregando solicitações...</div></div>
   `;
 
   const queueEl = container.querySelector('#queue');
+  const tabsEl = container.querySelector('#painel-tabs');
 
   let tecnicas = [];
   let porColecao = {};
+  const historico = { aprovado: [], recusado: [] };
   const estadoUi = {};
   let unsubscribes = [];
   let intervaloCountdown = null;
+  let abaAtiva = 'pendente';
 
   async function carregarTecnicas() {
     const snap = await getDocs(query(collection(db, 'tecnicas'), where('ativo', '==', true)));
@@ -211,6 +223,54 @@ export function renderPainelJulia(container) {
     `;
   }
 
+  function renderCardHistorico(item) {
+    const tipoLabel = TAG_TIPO[item.tipo]?.label || item.tipo;
+    const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
+    const tecnica = tecnicas.find((t) => t.id === item.tecnicaAtribuida);
+    const dataHora = item.tipo === 'workshop' ? item.data : item.dataEscolhida?.data;
+    const statusLabel = item.status === 'aprovado' ? 'Aprovada' : 'Recusada';
+
+    return `
+      <div class="request-card" data-item-id="${item._id}">
+        <div class="request-head">
+          <div class="who">
+            <strong>${tipoLabel} — ${item.tema || item.perfilProfissional || item.localInstituicao || ''}</strong>
+            <span>Solicitado por ${nomeSolicitante} em ${formatDataHora(item.criadoEm)}</span>
+            <div class="tags">
+              <span class="tag status-${item.status}">${statusLabel}</span>
+              ${renderTagsSolicitacao(item)}
+            </div>
+          </div>
+        </div>
+        <div class="request-body">
+          ${renderConteudoPorTipo(item)}
+          <div class="subhead">${item.status === 'aprovado' ? 'Decisão' : 'Recusada em'}</div>
+          <p>
+            ${item.status === 'aprovado' ? `<strong>Técnica:</strong> ${tecnica?.nome || '—'} — ` : ''}
+            ${dataHora ? `<strong>Data:</strong> ${dataHora} — ` : ''}
+            <strong>${item.status === 'aprovado' ? 'Aprovada' : 'Recusada'} em:</strong> ${formatDataHora(item.aprovadoEm)}
+          </p>
+        </div>
+      </div>
+    `;
+  }
+
+  async function carregarHistorico(status) {
+    queueEl.innerHTML = `<div class="loading-state">Carregando...</div>`;
+    const listas = await Promise.all(
+      COLECOES.map(async (colecaoNome) => {
+        const snap = await getDocs(query(collection(db, colecaoNome), where('status', '==', status)));
+        return snap.docs.map((d) => ({ _id: d.id, _colecao: colecaoNome, ...d.data() }));
+      })
+    );
+    historico[status] = listas.flat().sort((a, b) => {
+      const da = a.aprovadoEm?.toMillis ? a.aprovadoEm.toMillis() : 0;
+      const dbb = b.aprovadoEm?.toMillis ? b.aprovadoEm.toMillis() : 0;
+      return dbb - da;
+    });
+    renderFila();
+  }
+
   async function aprovar(item) {
     const estado = garantirEstado(item);
     const msgEl = container.querySelector(`#msg-${item._id}`);
@@ -299,6 +359,15 @@ export function renderPainelJulia(container) {
   }
 
   function renderFila() {
+    if (abaAtiva !== 'pendente') {
+      const itens = historico[abaAtiva] || [];
+      queueEl.innerHTML =
+        itens.length === 0
+          ? `<div class="empty-state">Nenhuma solicitação ${abaAtiva === 'aprovado' ? 'aprovada' : 'recusada'} ainda.</div>`
+          : itens.map((item) => renderCardHistorico(item)).join('');
+      return;
+    }
+
     const pendentes = todasSolicitacoesPendentes();
 
     if (pendentes.length === 0) {
@@ -352,6 +421,20 @@ export function renderPainelJulia(container) {
 
     intervaloCountdown = setInterval(renderFila, 30000);
   }
+
+  tabsEl.querySelectorAll('[data-aba]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.aba === abaAtiva) return;
+      abaAtiva = btn.dataset.aba;
+      tabsEl.querySelectorAll('[data-aba]').forEach((b) => b.classList.toggle('active', b === btn));
+
+      if (abaAtiva === 'pendente') {
+        renderFila();
+      } else {
+        carregarHistorico(abaAtiva);
+      }
+    });
+  });
 
   iniciar();
 

@@ -10,8 +10,14 @@ service cloud.firestore {
         && request.auth.token.email.matches('.*@smartgr\\.com\\.br$');
     }
 
-    function isJulia() {
-      return isSmartGRUser() && request.auth.token.email == 'julia@smartgr.com.br';
+    // TODO: jacke@smartgr.com.br liberado só pra teste do fluxo de aprovação
+    // sem precisar logar como Julia. Regra de negócio real é "só Julia
+    // aprova" — remover esse e-mail antes de produção.
+    function isAprovador() {
+      return isSmartGRUser() && (
+        request.auth.token.email == 'julia@smartgr.com.br' ||
+        request.auth.token.email == 'jacke@smartgr.com.br'
+      );
     }
 
     // Antecedência mínima calculada em America/Sao_Paulo (UTC-3 fixo, sem
@@ -51,14 +57,14 @@ service cloud.firestore {
     match /solicitacoes_consumidor_final/{id} {
       allow read: if isSmartGRUser();
       allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data.opcoesData, 7);
-      allow update: if isJulia();
+      allow update: if isAprovador();
       allow delete: if false;
     }
 
     match /solicitacoes_revenda/{id} {
       allow read: if isSmartGRUser();
       allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data.opcoesData, 7);
-      allow update: if isJulia();
+      allow update: if isAprovador();
       allow delete: if false;
     }
 
@@ -67,7 +73,7 @@ service cloud.firestore {
       allow create: if isSmartGRUser()
         && request.resource.data.data is string
         && diasAntecedenciaOk(request.resource.data.data, 7);
-      allow update: if isJulia();
+      allow update: if isAprovador();
       allow delete: if false;
     }
   }
