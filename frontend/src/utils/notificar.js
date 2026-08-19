@@ -38,7 +38,7 @@ const ROTA_FORM_POR_TIPO = {
   workshop: '#/workshop'
 };
 
-export async function notificarRecusa({ vendedorEmail, vendedorNome, tipo }) {
+export async function notificarRecusa({ vendedorEmail, vendedorNome, tipo, motivoRecusa }) {
   const workerUrl = import.meta.env.VITE_EMAIL_WORKER_URL;
   if (!workerUrl) return;
 
@@ -50,6 +50,7 @@ export async function notificarRecusa({ vendedorEmail, vendedorNome, tipo }) {
         vendedorEmail,
         vendedorNome,
         tipo,
+        motivoRecusa,
         formUrl: `${window.location.origin}/${ROTA_FORM_POR_TIPO[tipo] || ''}`
       })
     });

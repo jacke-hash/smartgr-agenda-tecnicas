@@ -323,6 +323,7 @@ export function renderPainelJulia(container) {
             ${dataHora ? `<strong>Data:</strong> ${dataHora} — ` : ''}
             <strong>${item.status === 'aprovado' ? 'Aprovada' : 'Recusada'} em:</strong> ${formatDataHora(item.aprovadoEm)}
           </p>
+          ${item.status === 'recusado' && item.motivoRecusa ? `<p><strong>Motivo:</strong> ${item.motivoRecusa}</p>` : ''}
         </div>
       </div>
     `;
@@ -449,8 +450,18 @@ export function renderPainelJulia(container) {
   }
 
   async function recusar(item) {
+    const motivo = window.prompt('Motivo da recusa (obrigatório):', '');
+    if (motivo === null) return; // cancelou
+
+    const motivoLimpo = motivo.trim();
+    if (!motivoLimpo) {
+      window.alert('Motivo é obrigatório para recusar a solicitação.');
+      return;
+    }
+
     await updateDoc(doc(db, item._colecao, item._id), {
       status: 'recusado',
+      motivoRecusa: motivoLimpo,
       aprovadoEm: serverTimestamp()
     });
 
@@ -458,7 +469,8 @@ export function renderPainelJulia(container) {
       notificarRecusa({
         vendedorEmail: item.vendedorEmail,
         vendedorNome: item.vendedor || item.vendedorAcompanha || '—',
-        tipo: item.tipo
+        tipo: item.tipo,
+        motivoRecusa: motivoLimpo
       });
     }
   }

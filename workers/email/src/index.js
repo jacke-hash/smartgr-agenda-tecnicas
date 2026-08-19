@@ -166,7 +166,12 @@ async function handleNotificarAprovacao(request, env, headers) {
     `
   });
 
-  if (tipo === 'consumidor_final' && tipoTreinamento === 'interno' && modalidade === 'presencial') {
+  if (
+    tipo === 'consumidor_final' &&
+    tipoTreinamento === 'interno' &&
+    modalidade === 'presencial' &&
+    solicitacao?.unidade === 'Zona Sul'
+  ) {
     await enviarEmail(env, {
       to: env.NAYRA_EMAIL,
       subject: 'Treinamento interno presencial confirmado — café/atendimento',
@@ -204,7 +209,7 @@ async function handleNotificarAprovacao(request, env, headers) {
 
 async function handleNotificarRecusa(request, env, headers) {
   const body = await request.json();
-  const { vendedorEmail, vendedorNome, tipo, formUrl } = body;
+  const { vendedorEmail, vendedorNome, tipo, formUrl, motivoRecusa } = body;
 
   if (!vendedorEmail || !tipo) {
     return json({ status: 'error', message: 'vendedorEmail e tipo são obrigatórios' }, 400, headers);
@@ -218,6 +223,7 @@ async function handleNotificarRecusa(request, env, headers) {
     html: `
       <p>Olá${vendedorNome ? ` ${vendedorNome}` : ''},</p>
       <p>Sua solicitação de treinamento (${tipoLabel}) foi recusada.</p>
+      ${motivoRecusa ? `<p><strong>Motivo:</strong> ${motivoRecusa}</p>` : ''}
       <p>Você pode enviar uma nova solicitação com outras datas:</p>
       ${formUrl ? `<p><a href="${formUrl}">Enviar nova solicitação</a></p>` : ''}
     `
