@@ -65,7 +65,7 @@ export function buildGoogleAuthUrl(env, state) {
     client_id: env.GOOGLE_OAUTH_CLIENT_ID,
     redirect_uri: env.GOOGLE_OAUTH_REDIRECT_URI,
     response_type: 'code',
-    scope: 'https://www.googleapis.com/auth/calendar.events email',
+    scope: 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.freebusy email',
     access_type: 'offline',
     prompt: 'consent',
     hd: 'smartgr.com.br',
