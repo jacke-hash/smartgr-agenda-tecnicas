@@ -73,6 +73,16 @@ export function opcoesForaDoPrazo(opcoes, diasMinimos = 7) {
   }, []);
 }
 
+// Só pra exibição — o valor armazenado (Firestore, comparações, validações)
+// continua sempre em ISO (YYYY-MM-DD). Não usar o retorno daqui pra nada além
+// de mostrar na tela.
+export function formatarDataBR(dataISO) {
+  if (!dataISO) return dataISO;
+  const [ano, mes, dia] = dataISO.split('-');
+  if (!ano || !mes || !dia) return dataISO;
+  return `${dia}-${mes}-${ano}`;
+}
+
 export function destacarOpcoesInvalidas(container, indicesInvalidos) {
   container.querySelectorAll('.date-option').forEach((el) => {
     const idx = Number(el.dataset.idx);

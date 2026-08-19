@@ -15,6 +15,15 @@ function json(data, status, headers) {
   return Response.json(data, { status: status || 200, headers });
 }
 
+// Só pra exibição no corpo do e-mail — o valor que chega aqui (dataHora.data)
+// continua ISO (YYYY-MM-DD), sem impacto em nada além do texto mostrado.
+function formatarDataBR(dataISO) {
+  if (!dataISO) return dataISO;
+  const [ano, mes, dia] = dataISO.split('-');
+  if (!ano || !mes || !dia) return dataISO;
+  return `${dia}-${mes}-${ano}`;
+}
+
 function formatEndereco(endereco) {
   if (!endereco) return null;
   return [
@@ -160,7 +169,7 @@ async function handleNotificarAprovacao(request, env, headers) {
       <p>Seu treinamento (${tipoLabel}) foi aprovado.</p>
       <ul>
         <li><strong>Técnica responsável:</strong> ${tecnicaNome}</li>
-        <li><strong>Data:</strong> ${dataHora.data} · ${dataHora.horaInicio} às ${dataHora.horaTermino}</li>
+        <li><strong>Data:</strong> ${formatarDataBR(dataHora.data)} · ${dataHora.horaInicio} às ${dataHora.horaTermino}</li>
         <li><strong>Local:</strong> ${local}</li>
       </ul>
     `
@@ -180,7 +189,7 @@ async function handleNotificarAprovacao(request, env, headers) {
         <ul>
           <li><strong>Solicitante:</strong> ${vendedorNome || '—'}</li>
           <li><strong>Técnica responsável:</strong> ${tecnicaNome}</li>
-          <li><strong>Data:</strong> ${dataHora.data} · ${dataHora.horaInicio} às ${dataHora.horaTermino}</li>
+          <li><strong>Data:</strong> ${formatarDataBR(dataHora.data)} · ${dataHora.horaInicio} às ${dataHora.horaTermino}</li>
         </ul>
         <p>Favor providenciar café/atendimento para o dia.</p>
       `
@@ -197,7 +206,7 @@ async function handleNotificarAprovacao(request, env, headers) {
         <p>Você foi designada para um novo treinamento (${tipoLabel}). Consulte os dados abaixo e confira sua agenda para se programar.</p>
         <ul>
           ${formatarCamposSolicitacao(tipo, solicitacao)}
-          <li><strong>Data:</strong> ${dataHora.data} · ${dataHora.horaInicio} às ${dataHora.horaTermino}</li>
+          <li><strong>Data:</strong> ${formatarDataBR(dataHora.data)} · ${dataHora.horaInicio} às ${dataHora.horaTermino}</li>
           <li><strong>Local:</strong> ${local}</li>
         </ul>
       `

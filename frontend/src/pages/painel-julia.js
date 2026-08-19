@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
 import { notificarAprovacao, notificarRecusa } from '../utils/notificar.js';
+import { formatarDataBR } from '../utils/date-options.js';
 
 const COLECOES = ['solicitacoes_consumidor_final', 'solicitacoes_revenda', 'solicitacoes_workshop'];
 
@@ -178,7 +179,7 @@ export function renderPainelJulia(container) {
             const conflitantes = tecnicasConflitantesEm(estado, idx);
             return `
           <div class="date-pick ${estado.dataEscolhidaIdx === idx ? 'chosen' : ''}" data-idx="${idx}">
-            <div class="d">${opt.data}</div>
+            <div class="d">${formatarDataBR(opt.data)}</div>
             <div class="t">${opt.horaInicio} - ${opt.horaTermino}</div>
             <div class="check">✓ escolhida</div>
             ${conflitantes.length ? `<div class="conflict-warn">⚠️ ${conflitantes.join(', ')}</div>` : ''}
@@ -285,7 +286,7 @@ export function renderPainelJulia(container) {
     const tipoLabel = TAG_TIPO[item.tipo]?.label || item.tipo;
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
     const tecnica = tecnicas.find((t) => t.id === item.tecnicaAtribuida);
-    const dataHora = item.dataEscolhida?.data;
+    const dataHora = formatarDataBR(item.dataEscolhida?.data);
     const statusLabel = item.status === 'aprovado' ? 'Aprovada' : 'Recusada';
 
     return `
