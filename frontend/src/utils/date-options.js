@@ -89,3 +89,81 @@ export function destacarOpcoesInvalidas(container, indicesInvalidos) {
     el.classList.toggle('invalid', indicesInvalidos.includes(idx));
   });
 }
+
+// --- "Período de vários dias" (tipoReserva === 'periodo') ---
+// Mesmo padrão visual/estrutural do modo "único" (.date-option + data-idx),
+// só que 2 opções em vez de 4, cada uma com {dataInicio, dataFim, horaInicio,
+// horaTermino} em vez de {data, horaInicio, horaTermino}.
+
+export function renderPeriodoOptionsHTML(diasMinimos = 7) {
+  const min = dataMinimaISO(diasMinimos);
+  const labels = ['Opção 1', 'Opção 2'];
+  return labels
+    .map(
+      (label, i) => `
+    <div class="date-option periodo" data-idx="${i}">
+      <span class="opt-label">${label}</span>
+      <div class="row">
+        <div class="time-pair">
+          <span>Data início</span>
+          <input type="date" data-idx="${i}" data-field="dataInicio" min="${min}" required />
+        </div>
+        <div class="time-pair">
+          <span>Data término</span>
+          <input type="date" data-idx="${i}" data-field="dataFim" min="${min}" required />
+        </div>
+      </div>
+      <div class="row">
+        <div class="time-pair">
+          <span>Horário início (1º dia)</span>
+          <input type="time" data-idx="${i}" data-field="horaInicio" required />
+        </div>
+        <div class="time-pair">
+          <span>Horário término (último dia)</span>
+          <input type="time" data-idx="${i}" data-field="horaTermino" required />
+        </div>
+      </div>
+    </div>
+  `
+    )
+    .join('');
+}
+
+// Trava a data término pra nunca ficar antes da data início escolhida —
+// UX na frente da validação em JS/rules, que também confere isso.
+export function ativarSincroniaPeriodo(container) {
+  container.querySelectorAll('.date-option.periodo').forEach((card) => {
+    const inicio = card.querySelector('input[data-field="dataInicio"]');
+    const fim = card.querySelector('input[data-field="dataFim"]');
+    if (!inicio || !fim) return;
+    inicio.addEventListener('change', () => {
+      if (inicio.value) fim.min = inicio.value;
+    });
+  });
+}
+
+export function coletarPeriodoOptions(container) {
+  const opcoes = [null, null];
+  container.querySelectorAll('input[data-idx]').forEach((input) => {
+    const idx = Number(input.dataset.idx);
+    const field = input.dataset.field;
+    if (!opcoes[idx]) opcoes[idx] = { dataInicio: '', dataFim: '', horaInicio: '', horaTermino: '' };
+    opcoes[idx][field] = input.value;
+  });
+  return opcoes;
+}
+
+export function periodoOptionsValidas(opcoes) {
+  return opcoes.every(
+    (o) => o && o.dataInicio && o.dataFim && o.horaInicio && o.horaTermino && o.dataFim >= o.dataInicio
+  );
+}
+
+// Só a data início de cada opção precisa da antecedência mínima — a data fim
+// é consequência do período, não uma nova "data de agendamento".
+export function opcoesPeriodoForaDoPrazo(opcoes, diasMinimos = 7) {
+  return opcoes.reduce((idxs, o, idx) => {
+    if (!diasAntecedenciaOk(o.dataInicio, diasMinimos)) idxs.push(idx);
+    return idxs;
+  }, []);
+}

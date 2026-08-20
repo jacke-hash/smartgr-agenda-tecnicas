@@ -390,6 +390,7 @@ input.invalid,select.invalid{border-color:var(--danger);}
 }
 
 .date-pick-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;}
+.date-pick-grid.periodo{grid-template-columns:repeat(2,1fr);}
 .date-pick{border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:12px 10px;text-align:center;cursor:pointer;transition:all .15s ease;}
 .date-pick:hover{border-color:var(--blue);}
 .date-pick.chosen{border-color:var(--blue);background:rgba(56,83,132,.06);}

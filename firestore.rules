@@ -39,12 +39,37 @@ service cloud.firestore {
 
     // Firestore Rules não suporta o macro `.all()` de lista (não é CEL
     // completo) — indexação explícita é o jeito que realmente funciona.
-    function todasOpcoesDataOk(opcoes, diasMinimos) {
+    function todasOpcoesUnicoOk(opcoes, diasMinimos) {
       return opcoes is list && opcoes.size() == 4
         && opcoes[0].data is string && diasAntecedenciaOk(opcoes[0].data, diasMinimos)
         && opcoes[1].data is string && diasAntecedenciaOk(opcoes[1].data, diasMinimos)
         && opcoes[2].data is string && diasAntecedenciaOk(opcoes[2].data, diasMinimos)
         && opcoes[3].data is string && diasAntecedenciaOk(opcoes[3].data, diasMinimos);
+    }
+
+    // tipoReserva === 'periodo': 2 opções de {dataInicio, dataFim, ...}. Só a
+    // dataInicio de cada opção precisa da antecedência mínima; dataFim só
+    // precisa não vir antes da dataInicio (comparação lexicográfica de string
+    // funciona pra ISO YYYY-MM-DD).
+    function todasOpcoesPeriodoOk(opcoes, diasMinimos) {
+      return opcoes is list && opcoes.size() == 2
+        && opcoes[0].dataInicio is string && opcoes[0].dataFim is string
+        && opcoes[0].dataFim >= opcoes[0].dataInicio
+        && diasAntecedenciaOk(opcoes[0].dataInicio, diasMinimos)
+        && opcoes[1].dataInicio is string && opcoes[1].dataFim is string
+        && opcoes[1].dataFim >= opcoes[1].dataInicio
+        && diasAntecedenciaOk(opcoes[1].dataInicio, diasMinimos);
+    }
+
+    // Recebe o documento inteiro (não só opcoesData) pra poder ler
+    // tipoReserva. Documentos antigos sem o campo (antes dessa feature)
+    // continuam tratados como 'unico' — só create passa por aqui, e create
+    // sempre é de documento novo, então "antigo" aqui só importa pra não
+    // quebrar se algum client mandar o campo ausente por engano.
+    function todasOpcoesDataOk(dados, diasMinimos) {
+      return (!('tipoReserva' in dados) || dados.tipoReserva == 'unico')
+        ? todasOpcoesUnicoOk(dados.opcoesData, diasMinimos)
+        : todasOpcoesPeriodoOk(dados.opcoesData, diasMinimos);
     }
 
     // Só leitura para o client. Escrita (inclusive token OAuth) só via Admin SDK
@@ -59,21 +84,21 @@ service cloud.firestore {
     // qualquer @smartgr.com.br, é o formulário público de solicitação).
     match /solicitacoes_consumidor_final/{id} {
       allow read: if isAprovador();
-      allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data.opcoesData, 7);
+      allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data, 7);
       allow update: if isAprovador();
       allow delete: if false;
     }
 
     match /solicitacoes_revenda/{id} {
       allow read: if isAprovador();
-      allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data.opcoesData, 7);
+      allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data, 7);
       allow update: if isAprovador();
       allow delete: if false;
     }
 
     match /solicitacoes_workshop/{id} {
       allow read: if isAprovador();
-      allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data.opcoesData, 7);
+      allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data, 7);
       allow update: if isAprovador();
       allow delete: if false;
     }

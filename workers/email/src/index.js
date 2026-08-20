@@ -24,6 +24,15 @@ function formatarDataBR(dataISO) {
   return `${dia}-${mes}-${ano}`;
 }
 
+// Linha "Data:" do e-mail — igual pra Consumidor Final/Revenda/Workshop.
+// tipoReserva 'periodo': dataHora = {dataInicio, dataFim, horaInicio, horaTermino}.
+function formatarLinhaData(dataHora, tipoReserva) {
+  if (tipoReserva === 'periodo') {
+    return `Período: ${formatarDataBR(dataHora.dataInicio)} a ${formatarDataBR(dataHora.dataFim)}, das ${dataHora.horaInicio} às ${dataHora.horaTermino}`;
+  }
+  return `${formatarDataBR(dataHora.data)} · ${dataHora.horaInicio} às ${dataHora.horaTermino}`;
+}
+
 function formatEndereco(endereco) {
   if (!endereco) return null;
   return [
@@ -142,6 +151,7 @@ async function handleNotificarAprovacao(request, env, headers) {
     vendedorNome,
     tipo,
     tipoTreinamento,
+    tipoReserva,
     modalidade,
     tecnicaNome,
     tecnicaEmail,
@@ -169,7 +179,7 @@ async function handleNotificarAprovacao(request, env, headers) {
       <p>Seu treinamento (${tipoLabel}) foi aprovado.</p>
       <ul>
         <li><strong>Técnica responsável:</strong> ${tecnicaNome}</li>
-        <li><strong>Data:</strong> ${formatarDataBR(dataHora.data)} · ${dataHora.horaInicio} às ${dataHora.horaTermino}</li>
+        <li><strong>Data:</strong> ${formatarLinhaData(dataHora, tipoReserva)}</li>
         <li><strong>Local:</strong> ${local}</li>
       </ul>
     `
@@ -189,7 +199,7 @@ async function handleNotificarAprovacao(request, env, headers) {
         <ul>
           <li><strong>Solicitante:</strong> ${vendedorNome || '—'}</li>
           <li><strong>Técnica responsável:</strong> ${tecnicaNome}</li>
-          <li><strong>Data:</strong> ${formatarDataBR(dataHora.data)} · ${dataHora.horaInicio} às ${dataHora.horaTermino}</li>
+          <li><strong>Data:</strong> ${formatarLinhaData(dataHora, tipoReserva)}</li>
         </ul>
         <p>Favor providenciar café/atendimento para o dia.</p>
       `
@@ -206,7 +216,7 @@ async function handleNotificarAprovacao(request, env, headers) {
         <p>Você foi designada para um novo treinamento (${tipoLabel}). Consulte os dados abaixo e confira sua agenda para se programar.</p>
         <ul>
           ${formatarCamposSolicitacao(tipo, solicitacao)}
-          <li><strong>Data:</strong> ${formatarDataBR(dataHora.data)} · ${dataHora.horaInicio} às ${dataHora.horaTermino}</li>
+          <li><strong>Data:</strong> ${formatarLinhaData(dataHora, tipoReserva)}</li>
           <li><strong>Local:</strong> ${local}</li>
         </ul>
       `

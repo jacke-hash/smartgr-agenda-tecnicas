@@ -93,8 +93,12 @@ async function handleCriarEvento(request, env, headers) {
     return json({ status: 'error', message: 'body inválido' }, 400, headers);
   }
 
-  const { tecnicaId, tipo, tipoTreinamento, modalidade, endereco, nomeSolicitante, dataHora } = body;
-  if (!tecnicaId || !tipo || !nomeSolicitante || !dataHora?.data || !dataHora?.horaInicio || !dataHora?.horaTermino) {
+  const { tecnicaId, tipo, tipoTreinamento, tipoReserva, modalidade, endereco, nomeSolicitante, dataHora } = body;
+  const ehPeriodo = tipoReserva === 'periodo';
+  const camposDataOk = ehPeriodo
+    ? Boolean(dataHora?.dataInicio && dataHora?.dataFim && dataHora?.horaInicio && dataHora?.horaTermino)
+    : Boolean(dataHora?.data && dataHora?.horaInicio && dataHora?.horaTermino);
+  if (!tecnicaId || !tipo || !nomeSolicitante || !camposDataOk) {
     return json({ status: 'error', message: 'campos obrigatórios ausentes' }, 400, headers);
   }
 
@@ -122,8 +126,12 @@ async function handleCriarEvento(request, env, headers) {
       .filter(Boolean)
       .join('\n'),
     location,
-    start: { dateTime: `${dataHora.data}T${dataHora.horaInicio}:00`, timeZone: 'America/Sao_Paulo' },
-    end: { dateTime: `${dataHora.data}T${dataHora.horaTermino}:00`, timeZone: 'America/Sao_Paulo' }
+    start: ehPeriodo
+      ? { dateTime: `${dataHora.dataInicio}T${dataHora.horaInicio}:00`, timeZone: 'America/Sao_Paulo' }
+      : { dateTime: `${dataHora.data}T${dataHora.horaInicio}:00`, timeZone: 'America/Sao_Paulo' },
+    end: ehPeriodo
+      ? { dateTime: `${dataHora.dataFim}T${dataHora.horaTermino}:00`, timeZone: 'America/Sao_Paulo' }
+      : { dateTime: `${dataHora.data}T${dataHora.horaTermino}:00`, timeZone: 'America/Sao_Paulo' }
   };
 
   const resp = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
@@ -143,21 +151,62 @@ async function handleCriarEvento(request, env, headers) {
   return json({ status: 'ok', eventId: evento.id, htmlLink: evento.htmlLink }, 200, headers);
 }
 
+const DIA_MS = 24 * 60 * 60 * 1000;
+
 function offsetBrasilia(dataHora, campoHora) {
   return new Date(`${dataHora.data}T${dataHora[campoHora]}:00-03:00`).getTime();
 }
 
+function meiaNoiteBrasiliaMs(dataISO) {
+  return new Date(`${dataISO}T00:00:00-03:00`).getTime();
+}
+
+function offsetHoraMs(horaStr) {
+  const [h, m] = horaStr.split(':').map(Number);
+  return (h * 60 + m) * 60 * 1000;
+}
+
+// tipoReserva === 'periodo': {dataInicio, dataFim, horaInicio, horaTermino}
+// vira uma OU MAIS janelas de ocupação — 1º dia (do horário de início até o
+// fim do dia), dias intermediários (dia inteiro, presume-se ocupado o dia
+// todo), último dia (da meia-noite até o horário de término). Se
+// dataInicio === dataFim, é só o intervalo do dia mesmo (igual ao "único").
+function expandirJanelasPeriodo(opcao) {
+  const inicioDiaMs = meiaNoiteBrasiliaMs(opcao.dataInicio);
+  const fimDiaMs = meiaNoiteBrasiliaMs(opcao.dataFim);
+  const offsetInicioMs = offsetHoraMs(opcao.horaInicio);
+  const offsetFimMs = offsetHoraMs(opcao.horaTermino);
+
+  if (inicioDiaMs === fimDiaMs) {
+    return [{ inicioMs: inicioDiaMs + offsetInicioMs, fimMs: fimDiaMs + offsetFimMs }];
+  }
+
+  const janelas = [{ inicioMs: inicioDiaMs + offsetInicioMs, fimMs: inicioDiaMs + DIA_MS }];
+  for (let diaMs = inicioDiaMs + DIA_MS; diaMs < fimDiaMs; diaMs += DIA_MS) {
+    janelas.push({ inicioMs: diaMs, fimMs: diaMs + DIA_MS });
+  }
+  janelas.push({ inicioMs: fimDiaMs, fimMs: fimDiaMs + offsetFimMs });
+  return janelas;
+}
+
+function janelasDaOpcao(opcao, tipoReserva) {
+  if (tipoReserva === 'periodo') return expandirJanelasPeriodo(opcao);
+  return [{ inicioMs: offsetBrasilia(opcao, 'horaInicio'), fimMs: offsetBrasilia(opcao, 'horaTermino') }];
+}
+
 // Uma chamada freeBusy por técnica cobrindo o intervalo [menor início, maior
-// término] entre todas as opções de data — mais barato que uma chamada por
-// combinação técnica×data. Overlap é checado localmente depois.
-async function verificarConflitosTecnica(env, tecnica, opcoesData) {
+// término] entre todas as janelas de todas as opções — mais barato que uma
+// chamada por combinação técnica×opção×dia. Overlap é checado localmente
+// depois, opção por opção (conflito = QUALQUER janela daquela opção bate
+// com algum bloco ocupado real da técnica).
+async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva) {
   const refreshToken = await decryptSecret(tecnica.refreshTokenEncrypted, env.TOKEN_ENCRYPTION_KEY);
   const { access_token: accessToken } = await refreshAccessToken(env, refreshToken);
 
-  const inicios = opcoesData.map((o) => offsetBrasilia(o, 'horaInicio'));
-  const fins = opcoesData.map((o) => offsetBrasilia(o, 'horaTermino'));
-  const timeMin = new Date(Math.min(...inicios)).toISOString();
-  const timeMax = new Date(Math.max(...fins)).toISOString();
+  const janelasPorOpcao = opcoesData.map((o) => janelasDaOpcao(o, tipoReserva));
+  const todasJanelas = janelasPorOpcao.flat();
+  const timeMin = new Date(Math.min(...todasJanelas.map((j) => j.inicioMs))).toISOString();
+  const timeMax = new Date(Math.max(...todasJanelas.map((j) => j.fimMs))).toISOString();
 
   const resp = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {
     method: 'POST',
@@ -173,15 +222,15 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData) {
   const data = await resp.json();
   const ocupado = data.calendars?.primary?.busy || [];
 
-  return opcoesData.map((o) => {
-    const inicioMs = offsetBrasilia(o, 'horaInicio');
-    const fimMs = offsetBrasilia(o, 'horaTermino');
-    return ocupado.some((b) => {
-      const bInicio = new Date(b.start).getTime();
-      const bFim = new Date(b.end).getTime();
-      return inicioMs < bFim && fimMs > bInicio;
-    });
-  });
+  return janelasPorOpcao.map((janelas) =>
+    janelas.some((j) =>
+      ocupado.some((b) => {
+        const bInicio = new Date(b.start).getTime();
+        const bFim = new Date(b.end).getTime();
+        return j.inicioMs < bFim && j.fimMs > bInicio;
+      })
+    )
+  );
 }
 
 async function handleVerificarConflitos(request, env, headers) {
@@ -192,7 +241,7 @@ async function handleVerificarConflitos(request, env, headers) {
     return json({ status: 'error', message: 'body inválido' }, 400, headers);
   }
 
-  const { tecnicaIds, opcoesData } = body;
+  const { tecnicaIds, opcoesData, tipoReserva } = body;
   if (!Array.isArray(tecnicaIds) || !Array.isArray(opcoesData) || opcoesData.length === 0) {
     return json({ status: 'error', message: 'tecnicaIds e opcoesData são obrigatórios' }, 400, headers);
   }
@@ -202,7 +251,7 @@ async function handleVerificarConflitos(request, env, headers) {
       try {
         const tecnica = await getTecnica(env, tecnicaId);
         if (!tecnica || !tecnica.refreshTokenEncrypted) return [tecnicaId, null];
-        return [tecnicaId, await verificarConflitosTecnica(env, tecnica, opcoesData)];
+        return [tecnicaId, await verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva || 'unico')];
       } catch (err) {
         console.error(`verificar-conflitos: falha pra técnica ${tecnicaId}:`, err.message);
         return [tecnicaId, null];

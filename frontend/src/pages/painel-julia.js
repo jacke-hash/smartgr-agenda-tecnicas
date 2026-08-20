@@ -170,16 +170,20 @@ export function renderPainelJulia(container) {
 
   function renderEscolhaData(item) {
     const estado = garantirEstado(item);
+    const ehPeriodo = item.tipoReserva === 'periodo';
 
     return `
-      <div class="subhead">Escolha a data</div>
-      <div class="date-pick-grid" data-escolha-data="${item._id}">
+      <div class="subhead">${ehPeriodo ? 'Escolha o período' : 'Escolha a data'}</div>
+      <div class="date-pick-grid ${ehPeriodo ? 'periodo' : ''}" data-escolha-data="${item._id}">
         ${(item.opcoesData || [])
           .map((opt, idx) => {
             const conflitantes = tecnicasConflitantesEm(estado, idx);
+            const linhaData = ehPeriodo
+              ? `${formatarDataBR(opt.dataInicio)} a ${formatarDataBR(opt.dataFim)}`
+              : formatarDataBR(opt.data);
             return `
           <div class="date-pick ${estado.dataEscolhidaIdx === idx ? 'chosen' : ''}" data-idx="${idx}">
-            <div class="d">${formatarDataBR(opt.data)}</div>
+            <div class="d">${linhaData}</div>
             <div class="t">${opt.horaInicio} - ${opt.horaTermino}</div>
             <div class="check">✓ escolhida</div>
             ${conflitantes.length ? `<div class="conflict-warn">⚠️ ${conflitantes.join(', ')}</div>` : ''}
@@ -216,6 +220,7 @@ export function renderPainelJulia(container) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tecnicaIds: tecnicasConectadas.map((t) => t.id),
+          tipoReserva: item.tipoReserva || 'unico',
           opcoesData: item.opcoesData
         })
       });
@@ -286,7 +291,12 @@ export function renderPainelJulia(container) {
     const tipoLabel = TAG_TIPO[item.tipo]?.label || item.tipo;
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
     const tecnica = tecnicas.find((t) => t.id === item.tecnicaAtribuida);
-    const dataHora = formatarDataBR(item.dataEscolhida?.data);
+    const dataHora =
+      item.tipoReserva === 'periodo'
+        ? item.dataEscolhida
+          ? `${formatarDataBR(item.dataEscolhida.dataInicio)} a ${formatarDataBR(item.dataEscolhida.dataFim)}`
+          : null
+        : formatarDataBR(item.dataEscolhida?.data);
     const statusLabel = item.status === 'aprovado' ? 'Aprovada' : 'Recusada';
 
     return `
@@ -377,6 +387,7 @@ export function renderPainelJulia(container) {
             tecnicaId: estado.tecnicaId,
             tipo: item.tipo,
             tipoTreinamento: item.tipoTreinamento || null,
+            tipoReserva: item.tipoReserva || 'unico',
             modalidade,
             endereco,
             nomeSolicitante,
@@ -419,6 +430,7 @@ export function renderPainelJulia(container) {
         vendedorNome: nomeSolicitante,
         tipo: item.tipo,
         tipoTreinamento: item.tipoTreinamento || null,
+        tipoReserva: item.tipoReserva || 'unico',
         modalidade,
         tecnicaNome: tecnica?.nome || '—',
         tecnicaEmail: tecnica?.email || null,

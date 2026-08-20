@@ -6,7 +6,12 @@ import {
   coletarDateOptions,
   dateOptionsValidas,
   opcoesForaDoPrazo,
-  destacarOpcoesInvalidas
+  destacarOpcoesInvalidas,
+  renderPeriodoOptionsHTML,
+  ativarSincroniaPeriodo,
+  coletarPeriodoOptions,
+  periodoOptionsValidas,
+  opcoesPeriodoForaDoPrazo
 } from '../utils/date-options.js';
 import { renderEnderecoHTML, coletarEndereco } from '../utils/endereco.js';
 import { notificarNovaSolicitacao } from '../utils/notificar.js';
@@ -122,9 +127,22 @@ export function renderFormConsumidorFinal(container, navigate, user) {
         </div>
 
         <div class="section">
+          <div class="section-title"><h3>Duração da reserva</h3></div>
+          <div class="field-row single">
+            <div class="field">
+              <label>Essa reserva é para mais de 1 dia?</label>
+              <div class="pill-group" id="grupo-tipo-reserva">
+                <div class="pill selected" data-val="unico">Não, um único dia</div>
+                <div class="pill" data-val="periodo">Sim, período de vários dias</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
           <div class="section-title">
-            <h3>Datas e horários de preferência</h3>
-            <span>informe 4 opções com início e término</span>
+            <h3 id="titulo-datas">Datas e horários de preferência</h3>
+            <span id="legenda-datas">informe 4 opções com início e término</span>
           </div>
           <div class="date-options" id="date-options">${renderDateOptionsHTML()}</div>
           <div class="advance-note">
@@ -245,22 +263,52 @@ export function renderFormConsumidorFinal(container, navigate, user) {
 
   aplicarTrava();
 
+  let tipoReserva = 'unico';
   const dateOptionsEl = container.querySelector('#date-options');
+  const tituloDatas = container.querySelector('#titulo-datas');
+  const legendaDatas = container.querySelector('#legenda-datas');
+  const grupoTipoReserva = container.querySelector('#grupo-tipo-reserva');
   const errorBox = container.querySelector('#form-error');
   const submitBtn = container.querySelector('#btn-submit');
+
+  function renderizarBlocoDatas() {
+    if (tipoReserva === 'periodo') {
+      tituloDatas.textContent = 'Períodos de preferência';
+      legendaDatas.textContent = 'informe 2 opções de período (data início/término)';
+      dateOptionsEl.innerHTML = renderPeriodoOptionsHTML();
+      ativarSincroniaPeriodo(dateOptionsEl);
+    } else {
+      tituloDatas.textContent = 'Datas e horários de preferência';
+      legendaDatas.textContent = 'informe 4 opções com início e término';
+      dateOptionsEl.innerHTML = renderDateOptionsHTML();
+    }
+  }
+
+  grupoTipoReserva.addEventListener('click', (e) => {
+    const pill = e.target.closest('.pill');
+    if (!pill) return;
+    tipoReserva = pill.dataset.val;
+    grupoTipoReserva.querySelectorAll('.pill').forEach((p) => p.classList.toggle('selected', p === pill));
+    renderizarBlocoDatas();
+  });
 
   container.querySelector('#form-final').addEventListener('submit', async (e) => {
     e.preventDefault();
     errorBox.innerHTML = '';
 
-    const opcoesData = coletarDateOptions(dateOptionsEl);
-    if (!dateOptionsValidas(opcoesData)) {
+    const opcoesData = tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : coletarDateOptions(dateOptionsEl);
+    const opcoesValidas = tipoReserva === 'periodo' ? periodoOptionsValidas(opcoesData) : dateOptionsValidas(opcoesData);
+    if (!opcoesValidas) {
       destacarOpcoesInvalidas(dateOptionsEl, []);
-      errorBox.innerHTML = `<div class="error-note">Preencha as 4 opções de data com início e término.</div>`;
+      errorBox.innerHTML =
+        tipoReserva === 'periodo'
+          ? `<div class="error-note">Preencha as 2 opções de período (data início, data término e horários) — a data término não pode ser antes da data início.</div>`
+          : `<div class="error-note">Preencha as 4 opções de data com início e término.</div>`;
       return;
     }
 
-    const forasDoPrazo = opcoesForaDoPrazo(opcoesData, 7);
+    const forasDoPrazo =
+      tipoReserva === 'periodo' ? opcoesPeriodoForaDoPrazo(opcoesData, 7) : opcoesForaDoPrazo(opcoesData, 7);
     destacarOpcoesInvalidas(dateOptionsEl, forasDoPrazo);
     if (forasDoPrazo.length > 0) {
       errorBox.innerHTML = `<div class="error-note">A data escolhida precisa ter no mínimo 7 dias de antecedência a partir de hoje. Corrija a(s) opção(ões) destacada(s).</div>`;
@@ -294,6 +342,7 @@ export function renderFormConsumidorFinal(container, navigate, user) {
         tipoTreinamento,
         unidade: tipoTreinamento === 'interno' ? container.querySelector('#unidade').value : null,
         endereco: tipoTreinamento === 'externo' ? coletarEndereco(container, 'final') : null,
+        tipoReserva,
         opcoesData,
         status: 'pendente',
         dataEscolhida: null,
