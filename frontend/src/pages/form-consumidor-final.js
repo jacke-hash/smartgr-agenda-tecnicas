@@ -152,6 +152,11 @@ export function renderFormConsumidorFinal(container, navigate, user) {
           <div id="form-error"></div>
         </div>
 
+        <label class="copia-thayla">
+          <input type="checkbox" id="copia-thayla" />
+          <span>Enviar uma cópia desta solicitação para a Thayla, para que ela acompanhe os pedidos feitos pela equipe.</span>
+        </label>
+
         <button type="submit" class="submit-btn" id="btn-submit">Enviar solicitação</button>
       </form>
 
@@ -365,13 +370,17 @@ export function renderFormConsumidorFinal(container, navigate, user) {
 
       await addDoc(collection(db, 'solicitacoes_consumidor_final'), doc);
 
-      notificarNovaSolicitacao('consumidor_final', {
-        Vendedor: doc.vendedor,
-        'Perfil profissional': doc.perfilProfissional,
-        Contato: doc.contato,
-        Modalidade: modalidade === 'online' ? 'Online' : 'Presencial',
-        'Tipo de treinamento': tipoTreinamento === 'interno' ? 'Interno' : 'Externo'
-      });
+      notificarNovaSolicitacao(
+        'consumidor_final',
+        {
+          Vendedor: doc.vendedor,
+          'Perfil profissional': doc.perfilProfissional,
+          Contato: doc.contato,
+          Modalidade: modalidade === 'online' ? 'Online' : 'Presencial',
+          'Tipo de treinamento': tipoTreinamento === 'interno' ? 'Interno' : 'Externo'
+        },
+        { copiaThayla: container.querySelector('#copia-thayla').checked }
+      );
 
       container.querySelector('.form-grid').innerHTML = `
         <div class="success-note">✓ Solicitação enviada com sucesso. A Julia vai revisar em até 24h.</div>

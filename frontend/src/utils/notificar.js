@@ -1,4 +1,4 @@
-export async function notificarNovaSolicitacao(tipo, resumo) {
+export async function notificarNovaSolicitacao(tipo, resumo, { copiaThayla = false } = {}) {
   const workerUrl = import.meta.env.VITE_EMAIL_WORKER_URL;
   if (!workerUrl) return;
 
@@ -9,6 +9,7 @@ export async function notificarNovaSolicitacao(tipo, resumo) {
       body: JSON.stringify({
         tipo,
         resumo,
+        copiaThayla,
         painelUrl: `${window.location.origin}/#/painel`
       })
     });

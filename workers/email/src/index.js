@@ -100,7 +100,7 @@ function formatarCamposSolicitacao(tipo, s) {
   return '';
 }
 
-async function enviarEmail(env, { to, subject, html }) {
+async function enviarEmail(env, { to, cc, subject, html }) {
   const resp = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -110,6 +110,7 @@ async function enviarEmail(env, { to, subject, html }) {
     body: JSON.stringify({
       from: 'Agenda de Treinamento SmartGR <agenda@smartgr.com.br>',
       to,
+      ...(cc ? { cc } : {}),
       subject,
       html
     })
@@ -122,7 +123,7 @@ async function enviarEmail(env, { to, subject, html }) {
 
 async function handleNotificarNovaSolicitacao(request, env, headers) {
   const body = await request.json();
-  const { tipo, resumo, painelUrl } = body;
+  const { tipo, resumo, painelUrl, copiaThayla } = body;
   if (!tipo || !resumo) return json({ status: 'error', message: 'tipo e resumo são obrigatórios' }, 400, headers);
 
   const tipoLabel = TIPO_LABEL[tipo] || tipo;
@@ -133,6 +134,7 @@ async function handleNotificarNovaSolicitacao(request, env, headers) {
 
   await enviarEmail(env, {
     to: 'julia@smartgr.com.br',
+    cc: copiaThayla ? 'thayla@smartgr.com.br' : undefined,
     subject: `Nova solicitação de treinamento aguardando aprovação — ${tipoLabel}`,
     html: `
       <p>Uma nova solicitação de treinamento (${tipoLabel}) foi registrada e aguarda sua aprovação.</p>

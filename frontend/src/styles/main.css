@@ -282,6 +282,14 @@ input.invalid,select.invalid{border-color:var(--danger);}
   background:var(--warn-bg);border:1px solid #F3D9B0;color:var(--warn);
   font-size:12.5px;padding:10px 12px;border-radius:var(--radius-sm);margin-top:10px;
 }
+.copia-thayla{
+  display:flex;gap:10px;align-items:flex-start;
+  background:var(--bg-soft,#F5F7FA);border:1px solid var(--border);
+  font-size:13px;color:var(--text-soft);padding:12px 14px;border-radius:var(--radius-sm);
+  cursor:pointer;
+}
+.copia-thayla input{margin-top:2px;flex-shrink:0;cursor:pointer;}
+.copia-thayla span{line-height:1.4;}
 .nayra-note{
   display:flex;gap:10px;align-items:flex-start;
   background:#FFF8E8;border:1px solid #F0DFA0;color:#8A6A00;

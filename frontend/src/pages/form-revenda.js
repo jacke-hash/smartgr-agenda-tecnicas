@@ -214,6 +214,11 @@ export function renderFormRevenda(container, navigate, user) {
           <div id="form-error"></div>
         </div>
 
+        <label class="copia-thayla">
+          <input type="checkbox" id="copia-thayla" />
+          <span>Enviar uma cópia desta solicitação para a Thayla, para que ela acompanhe os pedidos feitos pela equipe.</span>
+        </label>
+
         <button type="submit" class="submit-btn" id="btn-submit">Enviar solicitação</button>
       </form>
 
@@ -367,13 +372,17 @@ export function renderFormRevenda(container, navigate, user) {
 
       await addDoc(collection(db, 'solicitacoes_revenda'), doc);
 
-      notificarNovaSolicitacao('revenda', {
-        'Revenda/Rede': doc.nomeRevenda,
-        Vendedor: doc.vendedor,
-        Destino: doc.destinoTreinamento === 'propria_revenda' ? 'Equipe própria' : 'Cliente da revenda',
-        Tema: doc.tema,
-        Modalidade: doc.modalidade === 'online' ? 'Online' : 'Presencial'
-      });
+      notificarNovaSolicitacao(
+        'revenda',
+        {
+          'Revenda/Rede': doc.nomeRevenda,
+          Vendedor: doc.vendedor,
+          Destino: doc.destinoTreinamento === 'propria_revenda' ? 'Equipe própria' : 'Cliente da revenda',
+          Tema: doc.tema,
+          Modalidade: doc.modalidade === 'online' ? 'Online' : 'Presencial'
+        },
+        { copiaThayla: container.querySelector('#copia-thayla').checked }
+      );
 
       container.querySelector('.form-grid').innerHTML = `
         <div class="success-note">✓ Solicitação enviada com sucesso. A Julia vai revisar em até 24h.</div>
