@@ -6,8 +6,8 @@ export function renderLanding(container, navigate) {
       <div class="path-cards">
         <div class="path-card revenda" data-rota="#/revenda">
           <div class="icon">🏬</div>
-          <h3>Revenda</h3>
-          <p>Treinamento para o time da revenda ou para um cliente atendido pela revenda</p>
+          <h3>Revendas/Redes</h3>
+          <p>Treinamento para o time da revenda/rede ou para um cliente atendido por ela</p>
         </div>
         <div class="path-card final" data-rota="#/consumidor-final">
           <div class="icon">🙋</div>

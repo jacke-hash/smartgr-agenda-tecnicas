@@ -1,3 +1,7 @@
+// `required` nativo NÃO é usado aqui de propósito — só um mínimo das opções
+// precisa ser preenchido (2 de 4 no modo único, checado em JS via
+// dateOptionsValidas), então travar todos os campos como obrigatórios no
+// HTML bloquearia o submit mesmo com o mínimo já atingido.
 export function renderDateOptionsHTML(containerId, diasMinimos = 7) {
   const min = dataMinimaISO(diasMinimos);
   const labels = ['Opção 1', 'Opção 2', 'Opção 3', 'Opção 4'];
@@ -7,14 +11,14 @@ export function renderDateOptionsHTML(containerId, diasMinimos = 7) {
     <div class="date-option" data-idx="${i}">
       <span class="opt-label">${label}</span>
       <div class="row">
-        <input type="date" data-idx="${i}" data-field="data" min="${min}" required />
+        <input type="date" data-idx="${i}" data-field="data" min="${min}" />
         <div class="time-pair">
           <span>Início</span>
-          <input type="time" data-idx="${i}" data-field="horaInicio" required />
+          <input type="time" data-idx="${i}" data-field="horaInicio" />
         </div>
         <div class="time-pair">
           <span>Término</span>
-          <input type="time" data-idx="${i}" data-field="horaTermino" required />
+          <input type="time" data-idx="${i}" data-field="horaTermino" />
         </div>
       </div>
     </div>
@@ -39,8 +43,14 @@ export function coletarDateOptions(container) {
   return opcoes;
 }
 
-export function dateOptionsValidas(opcoes) {
-  return opcoes.every((o) => o && o.data && o.horaInicio && o.horaTermino);
+function opcaoUnicoPreenchida(o) {
+  return Boolean(o && o.data && o.horaInicio && o.horaTermino);
+}
+
+// Só um mínimo das 4 opções precisa vir preenchido — o resto fica opcional
+// (o vendedor pode não ter mais alternativas de data pra oferecer).
+export function dateOptionsValidas(opcoes, minPreenchidas = 2) {
+  return opcoes.filter(opcaoUnicoPreenchida).length >= minPreenchidas;
 }
 
 // Antecedência mínima é calculada em America/Sao_Paulo (UTC-3 fixo, sem horário
@@ -66,9 +76,11 @@ export function diasAntecedenciaOk(dataStr, diasMinimos = 7, hojeStr = hojeBrasi
   return diffDias >= diasMinimos;
 }
 
+// Só opções realmente preenchidas entram na checagem — uma opção deixada em
+// branco (permitido, já que só um mínimo é obrigatório) não é "fora do prazo".
 export function opcoesForaDoPrazo(opcoes, diasMinimos = 7) {
   return opcoes.reduce((idxs, o, idx) => {
-    if (!diasAntecedenciaOk(o.data, diasMinimos)) idxs.push(idx);
+    if (opcaoUnicoPreenchida(o) && !diasAntecedenciaOk(o.data, diasMinimos)) idxs.push(idx);
     return idxs;
   }, []);
 }
@@ -95,6 +107,8 @@ export function destacarOpcoesInvalidas(container, indicesInvalidos) {
 // só que 2 opções em vez de 4, cada uma com {dataInicio, dataFim, horaInicio,
 // horaTermino} em vez de {data, horaInicio, horaTermino}.
 
+// `required` nativo omitido de propósito — só 1 das 2 opções de período
+// precisa vir preenchida (checado em JS via periodoOptionsValidas).
 export function renderPeriodoOptionsHTML(diasMinimos = 7) {
   const min = dataMinimaISO(diasMinimos);
   const labels = ['Opção 1', 'Opção 2'];
@@ -106,21 +120,21 @@ export function renderPeriodoOptionsHTML(diasMinimos = 7) {
       <div class="row">
         <div class="time-pair">
           <span>Data início</span>
-          <input type="date" data-idx="${i}" data-field="dataInicio" min="${min}" required />
+          <input type="date" data-idx="${i}" data-field="dataInicio" min="${min}" />
         </div>
         <div class="time-pair">
           <span>Data término</span>
-          <input type="date" data-idx="${i}" data-field="dataFim" min="${min}" required />
+          <input type="date" data-idx="${i}" data-field="dataFim" min="${min}" />
         </div>
       </div>
       <div class="row">
         <div class="time-pair">
           <span>Horário início (1º dia)</span>
-          <input type="time" data-idx="${i}" data-field="horaInicio" required />
+          <input type="time" data-idx="${i}" data-field="horaInicio" />
         </div>
         <div class="time-pair">
           <span>Horário término (último dia)</span>
-          <input type="time" data-idx="${i}" data-field="horaTermino" required />
+          <input type="time" data-idx="${i}" data-field="horaTermino" />
         </div>
       </div>
     </div>
@@ -153,17 +167,34 @@ export function coletarPeriodoOptions(container) {
   return opcoes;
 }
 
-export function periodoOptionsValidas(opcoes) {
-  return opcoes.every(
-    (o) => o && o.dataInicio && o.dataFim && o.horaInicio && o.horaTermino && o.dataFim >= o.dataInicio
-  );
+function opcaoPeriodoPreenchida(o) {
+  return Boolean(o && o.dataInicio && o.dataFim && o.horaInicio && o.horaTermino);
 }
 
-// Só a data início de cada opção precisa da antecedência mínima — a data fim
-// é consequência do período, não uma nova "data de agendamento".
+function opcaoPeriodoCompleta(o) {
+  return opcaoPeriodoPreenchida(o) && o.dataFim >= o.dataInicio;
+}
+
+// Só um mínimo das 2 opções precisa vir preenchida (e com dataFim >= dataInicio).
+export function periodoOptionsValidas(opcoes, minPreenchidas = 1) {
+  return opcoes.filter(opcaoPeriodoCompleta).length >= minPreenchidas;
+}
+
+// Opção preenchida mas com data término antes da início — erro específico,
+// diferente de "faltou preencher".
+export function opcoesPeriodoComOrdemInvalida(opcoes) {
+  return opcoes.reduce((idxs, o, idx) => {
+    if (opcaoPeriodoPreenchida(o) && o.dataFim < o.dataInicio) idxs.push(idx);
+    return idxs;
+  }, []);
+}
+
+// Só a data início de opções realmente completas entra na checagem — a data
+// fim é consequência do período, não uma nova "data de agendamento", e uma
+// opção em branco (permitido) não é "fora do prazo".
 export function opcoesPeriodoForaDoPrazo(opcoes, diasMinimos = 7) {
   return opcoes.reduce((idxs, o, idx) => {
-    if (!diasAntecedenciaOk(o.dataInicio, diasMinimos)) idxs.push(idx);
+    if (opcaoPeriodoCompleta(o) && !diasAntecedenciaOk(o.dataInicio, diasMinimos)) idxs.push(idx);
     return idxs;
   }, []);
 }

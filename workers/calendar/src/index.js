@@ -11,7 +11,7 @@ const STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
 const TIPO_LABEL = {
   consumidor_final: 'Consumidor Final',
-  revenda: 'Revenda',
+  revenda: 'Revendas/Redes',
   workshop: 'Workshop'
 };
 
@@ -189,7 +189,19 @@ function expandirJanelasPeriodo(opcao) {
   return janelas;
 }
 
+// Opção pode vir vazia agora (mínimo de opções preenchidas relaxado no
+// frontend — só 2 de 4 no único, 1 de 2 no período). Opção vazia = sem
+// janela pra checar (nunca conflita), em vez de quebrar em Math.min/Date
+// inválida.
+function opcaoVazia(opcao, tipoReserva) {
+  if (tipoReserva === 'periodo') {
+    return !opcao || !opcao.dataInicio || !opcao.dataFim || !opcao.horaInicio || !opcao.horaTermino;
+  }
+  return !opcao || !opcao.data || !opcao.horaInicio || !opcao.horaTermino;
+}
+
 function janelasDaOpcao(opcao, tipoReserva) {
+  if (opcaoVazia(opcao, tipoReserva)) return [];
   if (tipoReserva === 'periodo') return expandirJanelasPeriodo(opcao);
   return [{ inicioMs: offsetBrasilia(opcao, 'horaInicio'), fimMs: offsetBrasilia(opcao, 'horaTermino') }];
 }
@@ -205,6 +217,7 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva) 
 
   const janelasPorOpcao = opcoesData.map((o) => janelasDaOpcao(o, tipoReserva));
   const todasJanelas = janelasPorOpcao.flat();
+  if (todasJanelas.length === 0) return opcoesData.map(() => false);
   const timeMin = new Date(Math.min(...todasJanelas.map((j) => j.inicioMs))).toISOString();
   const timeMax = new Date(Math.max(...todasJanelas.map((j) => j.fimMs))).toISOString();
 

@@ -7,7 +7,7 @@ import { corsHeaders, handlePreflight } from './cors.js';
 
 const TIPO_LABEL = {
   consumidor_final: 'Consumidor Final',
-  revenda: 'Revenda',
+  revenda: 'Revendas/Redes',
   workshop: 'Workshop'
 };
 
@@ -69,7 +69,7 @@ function formatarCamposSolicitacao(tipo, s) {
 
   if (tipo === 'revenda') {
     return `
-      <li><strong>Revenda:</strong> ${s.nomeRevenda || '—'}</li>
+      <li><strong>Revenda/Rede:</strong> ${s.nomeRevenda || '—'}</li>
       <li><strong>Vendedor:</strong> ${s.vendedor || '—'}</li>
       <li><strong>Destino:</strong> ${s.destinoTreinamento === 'propria_revenda' ? 'Equipe própria' : 'Cliente da revenda'}</li>
       <li><strong>Tema:</strong> ${s.tema || '—'}</li>

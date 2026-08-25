@@ -39,26 +39,57 @@ service cloud.firestore {
 
     // Firestore Rules não suporta o macro `.all()` de lista (não é CEL
     // completo) — indexação explícita é o jeito que realmente funciona.
+    //
+    // Mínimo relaxado: só 2 das 4 opções (único) / 1 das 2 opções (período)
+    // precisa vir preenchida — o resto pode ficar em branco (string vazia).
+    // Espelha frontend/src/utils/date-options.js (opcaoUnicoPreenchida /
+    // dateOptionsValidas). Toda opção que VIER preenchida ainda precisa
+    // respeitar a antecedência mínima — só a contagem de "quantas precisam
+    // vir preenchidas" que baixou.
+    function opcaoUnicoPreenchida(opcao) {
+      return opcao.data is string && opcao.data.size() > 0;
+    }
+
+    function opcaoUnicoOk(opcao, diasMinimos) {
+      return !opcaoUnicoPreenchida(opcao) || diasAntecedenciaOk(opcao.data, diasMinimos);
+    }
+
     function todasOpcoesUnicoOk(opcoes, diasMinimos) {
       return opcoes is list && opcoes.size() == 4
-        && opcoes[0].data is string && diasAntecedenciaOk(opcoes[0].data, diasMinimos)
-        && opcoes[1].data is string && diasAntecedenciaOk(opcoes[1].data, diasMinimos)
-        && opcoes[2].data is string && diasAntecedenciaOk(opcoes[2].data, diasMinimos)
-        && opcoes[3].data is string && diasAntecedenciaOk(opcoes[3].data, diasMinimos);
+        && opcaoUnicoOk(opcoes[0], diasMinimos)
+        && opcaoUnicoOk(opcoes[1], diasMinimos)
+        && opcaoUnicoOk(opcoes[2], diasMinimos)
+        && opcaoUnicoOk(opcoes[3], diasMinimos)
+        && (
+          (opcaoUnicoPreenchida(opcoes[0]) ? 1 : 0) +
+          (opcaoUnicoPreenchida(opcoes[1]) ? 1 : 0) +
+          (opcaoUnicoPreenchida(opcoes[2]) ? 1 : 0) +
+          (opcaoUnicoPreenchida(opcoes[3]) ? 1 : 0)
+        ) >= 2;
     }
 
     // tipoReserva === 'periodo': 2 opções de {dataInicio, dataFim, ...}. Só a
     // dataInicio de cada opção precisa da antecedência mínima; dataFim só
     // precisa não vir antes da dataInicio (comparação lexicográfica de string
     // funciona pra ISO YYYY-MM-DD).
+    function opcaoPeriodoPreenchida(opcao) {
+      return opcao.dataInicio is string && opcao.dataInicio.size() > 0
+        && opcao.dataFim is string && opcao.dataFim.size() > 0;
+    }
+
+    function opcaoPeriodoOk(opcao, diasMinimos) {
+      return !opcaoPeriodoPreenchida(opcao)
+        || (opcao.dataFim >= opcao.dataInicio && diasAntecedenciaOk(opcao.dataInicio, diasMinimos));
+    }
+
     function todasOpcoesPeriodoOk(opcoes, diasMinimos) {
       return opcoes is list && opcoes.size() == 2
-        && opcoes[0].dataInicio is string && opcoes[0].dataFim is string
-        && opcoes[0].dataFim >= opcoes[0].dataInicio
-        && diasAntecedenciaOk(opcoes[0].dataInicio, diasMinimos)
-        && opcoes[1].dataInicio is string && opcoes[1].dataFim is string
-        && opcoes[1].dataFim >= opcoes[1].dataInicio
-        && diasAntecedenciaOk(opcoes[1].dataInicio, diasMinimos);
+        && opcaoPeriodoOk(opcoes[0], diasMinimos)
+        && opcaoPeriodoOk(opcoes[1], diasMinimos)
+        && (
+          (opcaoPeriodoPreenchida(opcoes[0]) ? 1 : 0) +
+          (opcaoPeriodoPreenchida(opcoes[1]) ? 1 : 0)
+        ) >= 1;
     }
 
     // Recebe o documento inteiro (não só opcoesData) pra poder ler

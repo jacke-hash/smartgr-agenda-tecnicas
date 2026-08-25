@@ -16,7 +16,7 @@ const COLECOES = ['solicitacoes_consumidor_final', 'solicitacoes_revenda', 'soli
 
 const TAG_TIPO = {
   consumidor_final: { label: 'Consumidor Final', cls: 'consumidor_final' },
-  revenda: { label: 'Revenda', cls: 'revenda' },
+  revenda: { label: 'Revendas/Redes', cls: 'revenda' },
   workshop: { label: 'Workshop', cls: 'workshop' }
 };
 
@@ -74,7 +74,7 @@ function renderInfoConsumidorFinal(item) {
 function renderInfoRevenda(item) {
   return `
     <div class="info-grid">
-      <div class="info-item"><span>Revenda</span><strong>${item.nomeRevenda || '—'}</strong></div>
+      <div class="info-item"><span>Revenda/Rede</span><strong>${item.nomeRevenda || '—'}</strong></div>
       <div class="info-item"><span>Vendedor</span><strong>${item.vendedor || '—'}</strong></div>
       <div class="info-item"><span>Destino</span><strong>${item.destinoTreinamento === 'propria_revenda' ? 'Equipe própria' : 'Cliente da revenda'}</strong></div>
       <div class="info-item"><span>Tema</span><strong>${item.tema || '—'}</strong></div>
@@ -177,6 +177,12 @@ export function renderPainelJulia(container) {
       <div class="date-pick-grid ${ehPeriodo ? 'periodo' : ''}" data-escolha-data="${item._id}">
         ${(item.opcoesData || [])
           .map((opt, idx) => {
+            // Só um mínimo das opções vem preenchido agora (2 de 4 no único,
+            // 1 de 2 no período) — opção em branco não vira card vazio.
+            const preenchida = ehPeriodo
+              ? Boolean(opt?.dataInicio && opt?.dataFim && opt?.horaInicio && opt?.horaTermino)
+              : Boolean(opt?.data && opt?.horaInicio && opt?.horaTermino);
+            if (!preenchida) return '';
             const conflitantes = tecnicasConflitantesEm(estado, idx);
             const linhaData = ehPeriodo
               ? `${formatarDataBR(opt.dataInicio)} a ${formatarDataBR(opt.dataFim)}`

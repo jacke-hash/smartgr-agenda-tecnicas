@@ -11,7 +11,8 @@ import {
   ativarSincroniaPeriodo,
   coletarPeriodoOptions,
   periodoOptionsValidas,
-  opcoesPeriodoForaDoPrazo
+  opcoesPeriodoForaDoPrazo,
+  opcoesPeriodoComOrdemInvalida
 } from '../utils/date-options.js';
 import { renderEnderecoHTML, coletarEndereco } from '../utils/endereco.js';
 import { notificarNovaSolicitacao } from '../utils/notificar.js';
@@ -35,7 +36,7 @@ export function renderFormRevenda(container, navigate, user) {
   container.innerHTML = `
     <button class="back-link" id="btn-voltar">← Voltar</button>
     <div class="page-head">
-      <h1>Solicitar treinamento — Revenda</h1>
+      <h1>Solicitar treinamento — Revendas/Redes</h1>
       <p>Preencha os dados abaixo para a Julia revisar em até 24h.</p>
     </div>
 
@@ -161,7 +162,7 @@ export function renderFormRevenda(container, navigate, user) {
                 <label>Quem paga o transporte</label>
                 <div class="pill-group" id="grupo-quem-paga">
                   <div class="pill selected" data-val="smart">SmartGR</div>
-                  <div class="pill" data-val="revenda">Revenda</div>
+                  <div class="pill" data-val="revenda">Revenda/Rede</div>
                 </div>
               </div>
               <div class="field">
@@ -204,7 +205,7 @@ export function renderFormRevenda(container, navigate, user) {
         <div class="section">
           <div class="section-title">
             <h3 id="titulo-datas">Datas e horários de preferência</h3>
-            <span id="legenda-datas">informe 4 opções com início e término</span>
+            <span id="legenda-datas">informe pelo menos 2 das 4 opções, com início e término</span>
           </div>
           <div class="date-options" id="date-options">${renderDateOptionsHTML()}</div>
           <div class="advance-note">
@@ -276,12 +277,12 @@ export function renderFormRevenda(container, navigate, user) {
   function renderizarBlocoDatas() {
     if (tipoReserva === 'periodo') {
       tituloDatas.textContent = 'Períodos de preferência';
-      legendaDatas.textContent = 'informe 2 opções de período (data início/término)';
+      legendaDatas.textContent = 'informe pelo menos 1 das 2 opções de período (data início/término)';
       dateOptionsEl.innerHTML = renderPeriodoOptionsHTML();
       ativarSincroniaPeriodo(dateOptionsEl);
     } else {
       tituloDatas.textContent = 'Datas e horários de preferência';
-      legendaDatas.textContent = 'informe 4 opções com início e término';
+      legendaDatas.textContent = 'informe pelo menos 2 das 4 opções, com início e término';
       dateOptionsEl.innerHTML = renderDateOptionsHTML();
     }
   }
@@ -296,13 +297,23 @@ export function renderFormRevenda(container, navigate, user) {
     errorBox.innerHTML = '';
 
     const opcoesData = tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : coletarDateOptions(dateOptionsEl);
+
+    if (tipoReserva === 'periodo') {
+      const ordemInvalida = opcoesPeriodoComOrdemInvalida(opcoesData);
+      if (ordemInvalida.length > 0) {
+        destacarOpcoesInvalidas(dateOptionsEl, ordemInvalida);
+        errorBox.innerHTML = `<div class="error-note">A data término não pode ser antes da data início. Corrija a(s) opção(ões) destacada(s).</div>`;
+        return;
+      }
+    }
+
     const opcoesValidas = tipoReserva === 'periodo' ? periodoOptionsValidas(opcoesData) : dateOptionsValidas(opcoesData);
     if (!opcoesValidas) {
       destacarOpcoesInvalidas(dateOptionsEl, []);
       errorBox.innerHTML =
         tipoReserva === 'periodo'
-          ? `<div class="error-note">Preencha as 2 opções de período (data início, data término e horários) — a data término não pode ser antes da data início.</div>`
-          : `<div class="error-note">Preencha as 4 opções de data com início e término.</div>`;
+          ? `<div class="error-note">Preencha pelo menos 1 das 2 opções de período (data início, data término e horários).</div>`
+          : `<div class="error-note">Preencha pelo menos 2 das 4 opções de data com início e término.</div>`;
       return;
     }
 
@@ -357,7 +368,7 @@ export function renderFormRevenda(container, navigate, user) {
       await addDoc(collection(db, 'solicitacoes_revenda'), doc);
 
       notificarNovaSolicitacao('revenda', {
-        Revenda: doc.nomeRevenda,
+        'Revenda/Rede': doc.nomeRevenda,
         Vendedor: doc.vendedor,
         Destino: doc.destinoTreinamento === 'propria_revenda' ? 'Equipe própria' : 'Cliente da revenda',
         Tema: doc.tema,
