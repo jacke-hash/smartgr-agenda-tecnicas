@@ -325,7 +325,9 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva) 
   const todasJanelas = janelasPorOpcao.flat();
   const todosDomingos = [...new Set(domingosPorOpcao.flat())];
 
-  if (todasJanelas.length === 0 && todosDomingos.length === 0) return opcoesData.map(() => false);
+  if (todasJanelas.length === 0 && todosDomingos.length === 0) {
+    return opcoesData.map(() => ({ conflito: false, folga: false }));
+  }
 
   // Conflito por horário (comportamento existente): uma chamada freeBusy
   // cobrindo o intervalo [menor início, maior término] entre todas as
@@ -373,9 +375,14 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva) 
 
   const domingoOcupado = (diaISO) => eventosDomingo.some((e) => eventoTocaDia(e, diaISO));
 
-  return opcoesData.map(
-    (_, idx) => temOverlapHorario(janelasPorOpcao[idx]) || domingosPorOpcao[idx].some(domingoOcupado)
-  );
+  // Dois motivos distintos, não misturar: "conflito" é ela já ter algo
+  // marcado por HORÁRIO exatamente ali; "folga" é a regra de descanso
+  // (trabalhou domingo, indisponível a segunda inteira) — o painel mostra
+  // cada um com aviso diferente pra não confundir Julia.
+  return opcoesData.map((_, idx) => ({
+    conflito: temOverlapHorario(janelasPorOpcao[idx]),
+    folga: domingosPorOpcao[idx].some(domingoOcupado)
+  }));
 }
 
 async function handleVerificarConflitos(request, env, headers) {

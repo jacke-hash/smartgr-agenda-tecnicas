@@ -162,10 +162,22 @@ export function renderPainelJulia(container) {
     return '';
   }
 
-  // Técnicas conflitantes numa opção de data específica (idx no array de
-  // opções checadas — os 3 tipos têm 4 opções agora).
-  function tecnicasConflitantesEm(estado, idx) {
-    return tecnicas.filter((t) => estado.conflitos?.[t.id]?.[idx]).map((t) => t.nome);
+  // Dois motivos distintos de indisponibilidade numa opção de data — não
+  // misturar na mesma mensagem: "conflito" é a técnica já ter algo marcado
+  // naquele horário; "folga" é a regra de descanso (trabalhou domingo,
+  // segunda inteira indisponível). estado.conflitos[tecnicaId][idx] vem do
+  // worker como { conflito, folga }.
+  function tecnicasComConflitoEm(estado, idx) {
+    return tecnicas.filter((t) => estado.conflitos?.[t.id]?.[idx]?.conflito).map((t) => t.nome);
+  }
+
+  function tecnicasComFolgaEm(estado, idx) {
+    return tecnicas.filter((t) => estado.conflitos?.[t.id]?.[idx]?.folga).map((t) => t.nome);
+  }
+
+  function tecnicaIndisponivelEm(estado, tecnicaId, idx) {
+    const status = estado.conflitos?.[tecnicaId]?.[idx];
+    return Boolean(status?.conflito || status?.folga);
   }
 
   function renderEscolhaData(item) {
@@ -183,7 +195,8 @@ export function renderPainelJulia(container) {
               ? Boolean(opt?.dataInicio && opt?.dataFim && opt?.horaInicio && opt?.horaTermino)
               : Boolean(opt?.data && opt?.horaInicio && opt?.horaTermino);
             if (!preenchida) return '';
-            const conflitantes = tecnicasConflitantesEm(estado, idx);
+            const conflitantes = tecnicasComConflitoEm(estado, idx);
+            const emFolga = tecnicasComFolgaEm(estado, idx);
             const linhaData = ehPeriodo
               ? `${formatarDataBR(opt.dataInicio)} a ${formatarDataBR(opt.dataFim)}`
               : formatarDataBR(opt.data);
@@ -193,6 +206,7 @@ export function renderPainelJulia(container) {
             <div class="t">${opt.horaInicio} - ${opt.horaTermino}</div>
             <div class="check">✓ escolhida</div>
             ${conflitantes.length ? `<div class="conflict-warn">⚠️ ${conflitantes.join(', ')}</div>` : ''}
+            ${emFolga.length ? `<div class="folga-warn">😴 Indisponível (folga): ${emFolga.join(', ')}</div>` : ''}
           </div>
         `;
           })
@@ -251,8 +265,9 @@ export function renderPainelJulia(container) {
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
 
     const idxRelevante = estado.dataEscolhidaIdx;
-    const combinacaoTemConflito =
-      Boolean(estado.tecnicaId) && idxRelevante !== null && Boolean(estado.conflitos?.[estado.tecnicaId]?.[idxRelevante]);
+    const statusEscolhida =
+      estado.tecnicaId && idxRelevante !== null ? estado.conflitos?.[estado.tecnicaId]?.[idxRelevante] : null;
+    const combinacaoIndisponivel = Boolean(statusEscolhida?.conflito || statusEscolhida?.folga);
 
     return `
       <div class="request-card" data-item-id="${item._id}">
@@ -275,16 +290,21 @@ export function renderPainelJulia(container) {
                 <option value="">Selecione...</option>
                 ${tecnicas
                   .map((t) => {
-                    const temConflito = idxRelevante !== null && estado.conflitos?.[t.id]?.[idxRelevante];
-                    return `<option value="${t.id}" ${estado.tecnicaId === t.id ? 'selected' : ''}>${t.nome}${temConflito ? ' ⚠️ conflito' : ''}</option>`;
+                    const status = idxRelevante !== null ? estado.conflitos?.[t.id]?.[idxRelevante] : null;
+                    const tag = status?.folga ? ' 😴 folga' : status?.conflito ? ' ⚠️ conflito' : '';
+                    return `<option value="${t.id}" ${estado.tecnicaId === t.id ? 'selected' : ''}>${t.nome}${tag}</option>`;
                   })
                   .join('')}
               </select>
             </div>
           </div>
-          ${combinacaoTemConflito ? `<div class="error-note">⚠️ Técnica selecionada tem conflito de agenda nesse horário. Escolha outra técnica ou data.</div>` : ''}
+          ${
+            combinacaoIndisponivel
+              ? `<div class="error-note">${statusEscolhida.folga ? '😴 Técnica selecionada está de folga (trabalhou no domingo anterior). Escolha outra técnica ou data.' : '⚠️ Técnica selecionada tem conflito de agenda nesse horário. Escolha outra técnica ou data.'}</div>`
+              : ''
+          }
           <div class="action-row">
-            <button class="btn btn-approve" data-aprovar="${item._id}" ${combinacaoTemConflito ? 'disabled' : ''}>Aprovar e atribuir</button>
+            <button class="btn btn-approve" data-aprovar="${item._id}" ${combinacaoIndisponivel ? 'disabled' : ''}>Aprovar e atribuir</button>
             <button class="btn btn-decline" data-recusar="${item._id}">Recusar</button>
           </div>
           <div id="msg-${item._id}"></div>
@@ -362,8 +382,9 @@ export function renderPainelJulia(container) {
     }
 
     const idxRelevante = estado.dataEscolhidaIdx;
-    if (estado.conflitos?.[estado.tecnicaId]?.[idxRelevante]) {
-      msgEl.innerHTML = `<div class="error-note">⚠️ Técnica selecionada tem conflito de agenda nesse horário. Escolha outra técnica ou data.</div>`;
+    if (tecnicaIndisponivelEm(estado, estado.tecnicaId, idxRelevante)) {
+      const folga = estado.conflitos?.[estado.tecnicaId]?.[idxRelevante]?.folga;
+      msgEl.innerHTML = `<div class="error-note">${folga ? '😴 Técnica selecionada está de folga (trabalhou no domingo anterior). Escolha outra técnica ou data.' : '⚠️ Técnica selecionada tem conflito de agenda nesse horário. Escolha outra técnica ou data.'}</div>`;
       return;
     }
 
