@@ -254,17 +254,63 @@ function janelasDaOpcao(opcao, tipoReserva) {
   return [{ inicioMs: offsetBrasilia(opcao, 'horaInicio'), fimMs: offsetBrasilia(opcao, 'horaTermino') }];
 }
 
+// Regra "domingo trabalhado, segunda de folga": dia da semana da data ISO,
+// independente de fuso — é uma propriedade da data civil em si, não do
+// instante, então dá pra calcular direto em UTC sem risco de virar de dia.
+// 0 = domingo, 1 = segunda, ..., 6 = sábado.
+function diaDaSemana(dataISO) {
+  return new Date(`${dataISO}T00:00:00Z`).getUTCDay();
+}
+
+function diaAnteriorISO(dataISO) {
+  const d = new Date(`${dataISO}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// Todos os dias civis cobertos por uma opção — só a data (único) ou cada dia
+// entre dataInicio e dataFim, inclusive (período). Comparação de string ISO
+// funciona pra ordenar/iterar datas YYYY-MM-DD.
+function diasDaOpcao(opcao, tipoReserva) {
+  if (opcaoVazia(opcao, tipoReserva)) return [];
+  if (tipoReserva !== 'periodo') return [opcao.data];
+
+  const dias = [];
+  let atual = opcao.dataInicio;
+  while (atual <= opcao.dataFim) {
+    dias.push(atual);
+    atual = new Date(new Date(`${atual}T00:00:00Z`).getTime() + DIA_MS).toISOString().slice(0, 10);
+  }
+  return dias;
+}
+
 // Uma chamada freeBusy por técnica cobrindo o intervalo [menor início, maior
 // término] entre todas as janelas de todas as opções — mais barato que uma
 // chamada por combinação técnica×opção×dia. Overlap é checado localmente
 // depois, opção por opção (conflito = QUALQUER janela daquela opção bate
 // com algum bloco ocupado real da técnica).
+// Domingo ocupado (qualquer coisa na agenda dela) = segunda inteira
+// indisponível — regra de descanso, independente de que compromisso é.
+// Retorna a janela do dia inteiro de domingo (Brasília) pra cada opção que
+// tenha algum dia caindo numa segunda-feira; usado só pra ampliar o range da
+// consulta freeBusy e depois checar overlap, não entra nas janelas normais.
+function janelasDomingoAntesDaSegunda(opcao, tipoReserva) {
+  return diasDaOpcao(opcao, tipoReserva)
+    .filter((dia) => diaDaSemana(dia) === 1)
+    .map((segunda) => {
+      const domingo = diaAnteriorISO(segunda);
+      const inicioMs = meiaNoiteBrasiliaMs(domingo);
+      return { inicioMs, fimMs: inicioMs + DIA_MS };
+    });
+}
+
 async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva) {
   const refreshToken = await decryptSecret(tecnica.refreshTokenEncrypted, env.TOKEN_ENCRYPTION_KEY);
   const { access_token: accessToken } = await refreshAccessToken(env, refreshToken);
 
   const janelasPorOpcao = opcoesData.map((o) => janelasDaOpcao(o, tipoReserva));
-  const todasJanelas = janelasPorOpcao.flat();
+  const janelasDomingoPorOpcao = opcoesData.map((o) => janelasDomingoAntesDaSegunda(o, tipoReserva));
+  const todasJanelas = [...janelasPorOpcao.flat(), ...janelasDomingoPorOpcao.flat()];
   if (todasJanelas.length === 0) return opcoesData.map(() => false);
   const timeMin = new Date(Math.min(...todasJanelas.map((j) => j.inicioMs))).toISOString();
   const timeMax = new Date(Math.max(...todasJanelas.map((j) => j.fimMs))).toISOString();
@@ -283,15 +329,16 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva) 
   const data = await resp.json();
   const ocupado = data.calendars?.primary?.busy || [];
 
-  return janelasPorOpcao.map((janelas) =>
+  const temOverlap = (janelas) =>
     janelas.some((j) =>
       ocupado.some((b) => {
         const bInicio = new Date(b.start).getTime();
         const bFim = new Date(b.end).getTime();
         return j.inicioMs < bFim && j.fimMs > bInicio;
       })
-    )
-  );
+    );
+
+  return janelasPorOpcao.map((janelas, idx) => temOverlap(janelas) || temOverlap(janelasDomingoPorOpcao[idx]));
 }
 
 async function handleVerificarConflitos(request, env, headers) {
