@@ -265,9 +265,16 @@ export function renderPainelJulia(container) {
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
 
     const idxRelevante = estado.dataEscolhidaIdx;
+    // Enquanto a checagem de disponibilidade ainda não voltou do worker,
+    // estado.conflitos fica undefined — nesse intervalo NÃO dá pra saber se a
+    // técnica está livre. Sem essa distinção, a ausência de aviso parecia
+    // "sem conflito confirmado" quando na verdade era "ainda não sei", e
+    // Julia podia aprovar antes da checagem terminar.
+    const aindaVerificando = estado.conflitos === undefined;
     const statusEscolhida =
       estado.tecnicaId && idxRelevante !== null ? estado.conflitos?.[estado.tecnicaId]?.[idxRelevante] : null;
     const combinacaoIndisponivel = Boolean(statusEscolhida?.conflito || statusEscolhida?.folga);
+    const aprovarBloqueado = aindaVerificando || combinacaoIndisponivel;
 
     return `
       <div class="request-card" data-item-id="${item._id}">
@@ -299,12 +306,14 @@ export function renderPainelJulia(container) {
             </div>
           </div>
           ${
-            combinacaoIndisponivel
-              ? `<div class="error-note">${statusEscolhida.folga ? '😴 Técnica selecionada está de folga (trabalhou no domingo anterior). Escolha outra técnica ou data.' : '⚠️ Técnica selecionada tem conflito de agenda nesse horário. Escolha outra técnica ou data.'}</div>`
-              : ''
+            aindaVerificando
+              ? `<div class="checking-note">🔄 Verificando disponibilidade das técnicas na agenda...</div>`
+              : combinacaoIndisponivel
+                ? `<div class="error-note">${statusEscolhida.folga ? '😴 Técnica selecionada está de folga (trabalhou no domingo anterior). Escolha outra técnica ou data.' : '⚠️ Técnica selecionada tem conflito de agenda nesse horário. Escolha outra técnica ou data.'}</div>`
+                : ''
           }
           <div class="action-row">
-            <button class="btn btn-approve" data-aprovar="${item._id}" ${combinacaoIndisponivel ? 'disabled' : ''}>Aprovar e atribuir</button>
+            <button class="btn btn-approve" data-aprovar="${item._id}" ${aprovarBloqueado ? 'disabled' : ''}>Aprovar e atribuir</button>
             <button class="btn btn-decline" data-recusar="${item._id}">Recusar</button>
           </div>
           <div id="msg-${item._id}"></div>
@@ -378,6 +387,12 @@ export function renderPainelJulia(container) {
     }
     if (estado.dataEscolhidaIdx === null) {
       msgEl.innerHTML = `<div class="error-note">Escolha uma das datas propostas antes de aprovar.</div>`;
+      return;
+    }
+    // Defesa extra além do botão desabilitado — se o clique já estava em voo
+    // quando a checagem ainda não tinha voltado, não deixa aprovar às cegas.
+    if (estado.conflitos === undefined) {
+      msgEl.innerHTML = `<div class="error-note">Aguarde a verificação de disponibilidade das técnicas terminar.</div>`;
       return;
     }
 
