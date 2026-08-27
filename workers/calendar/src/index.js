@@ -37,6 +37,48 @@ function formatEndereco(endereco) {
     .join(' — ');
 }
 
+// Linhas extras da descrição do evento — o que a técnica realmente precisa
+// pra se preparar (quem é o cliente, o equipamento, o local/unidade), não só
+// tipo/solicitante. Espelha (em texto puro, pro corpo do evento do Calendar)
+// os mesmos campos que workers/email formata em HTML — duplicação
+// consciente, contexto de renderização diferente.
+function formatarDescricaoSolicitacao(tipo, s) {
+  if (!s) return [];
+
+  if (tipo === 'consumidor_final') {
+    const participantes = (s.participantes || []).map((p) => `${p.nome} (${p.profissao})`).join(', ');
+    return [
+      participantes ? `Cliente(s): ${participantes}` : null,
+      s.equipamentoComprado ? `Equipamento: ${s.equipamentoComprado}${s.numeroSerie ? ` — nº série ${s.numeroSerie}` : ''}` : null,
+      s.unidade ? `Unidade: ${s.unidade}` : null,
+      s.perfilProfissional ? `Perfil do profissional: ${s.perfilProfissional}` : null,
+      s.contato ? `Contato: ${s.contato}` : null,
+      s.insumosAdquiridos ? `Insumos: ${s.insumosAdquiridos}` : null,
+      s.observacao ? `Observação: ${s.observacao}` : null
+    ];
+  }
+
+  if (tipo === 'revenda') {
+    return [
+      s.nomeRevenda ? `Revenda/Rede: ${s.nomeRevenda}` : null,
+      s.tema ? `Tema: ${s.tema}` : null,
+      s.destinoTreinamento ? `Destino: ${s.destinoTreinamento === 'propria_revenda' ? 'Equipe própria' : 'Cliente da revenda'}` : null
+    ];
+  }
+
+  if (tipo === 'workshop') {
+    return [
+      s.localInstituicao ? `Instituição: ${s.localInstituicao}` : null,
+      s.tema ? `Tema: ${s.tema}` : null,
+      s.publico ? `Público: ${s.publico}` : null,
+      s.participantesEstimados != null ? `Participantes estimados: ${s.participantesEstimados}` : null,
+      s.responsavelLocal?.nome ? `Responsável local: ${s.responsavelLocal.nome} (${s.responsavelLocal.contato || '—'})` : null
+    ];
+  }
+
+  return [];
+}
+
 async function handleOauthIniciar(url, env, headers) {
   const origin = url.searchParams.get('origin');
   if (!origin) return json({ status: 'error', message: 'origin é obrigatório' }, 400, headers);
@@ -93,7 +135,7 @@ async function handleCriarEvento(request, env, headers) {
     return json({ status: 'error', message: 'body inválido' }, 400, headers);
   }
 
-  const { tecnicaId, tipo, tipoTreinamento, tipoReserva, modalidade, endereco, nomeSolicitante, dataHora } = body;
+  const { tecnicaId, tipo, tipoTreinamento, tipoReserva, modalidade, endereco, nomeSolicitante, dataHora, solicitacao } = body;
   const ehPeriodo = tipoReserva === 'periodo';
   const camposDataOk = ehPeriodo
     ? Boolean(dataHora?.dataInicio && dataHora?.dataFim && dataHora?.horaInicio && dataHora?.horaTermino)
@@ -121,7 +163,8 @@ async function handleCriarEvento(request, env, headers) {
     description: [
       `Tipo: ${tipoLabel}`,
       tipoTreinamento ? `Treinamento: ${tipoTreinamento === 'interno' ? 'Interno' : 'Externo'}` : null,
-      `Solicitante: ${nomeSolicitante}`
+      `Solicitante: ${nomeSolicitante}`,
+      ...formatarDescricaoSolicitacao(tipo, solicitacao)
     ]
       .filter(Boolean)
       .join('\n'),

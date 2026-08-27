@@ -383,6 +383,24 @@ export function renderPainelJulia(container) {
     const modalidade = item.tipo === 'workshop' ? 'presencial' : item.modalidade;
     const endereco = item.endereco || null;
 
+    // Só os campos preenchidos pelo vendedor no formulário original — exclui
+    // metadados internos (_id/_colecao) e Timestamps do Firestore, que não
+    // servem pro corpo do e-mail/descrição do evento e não serializam bem em
+    // JSON. Usado tanto no evento do Calendar (mais contexto pra técnica)
+    // quanto no e-mail de aprovação.
+    const {
+      _id,
+      _colecao,
+      criadoEm,
+      slaExpiraEm,
+      aprovadoEm,
+      tecnicaAtribuida,
+      status,
+      opcoesData,
+      dataEscolhida,
+      ...solicitacaoParaEmail
+    } = item;
+
     const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
     if (calendarWorkerUrl) {
       try {
@@ -397,7 +415,8 @@ export function renderPainelJulia(container) {
             modalidade,
             endereco,
             nomeSolicitante,
-            dataHora
+            dataHora,
+            solicitacao: solicitacaoParaEmail
           })
         });
         const resultado = await resp.json();
@@ -415,22 +434,6 @@ export function renderPainelJulia(container) {
     }
 
     if (item.vendedorEmail) {
-      // Só os campos preenchidos pelo vendedor no formulário original — exclui
-      // metadados internos (_id/_colecao) e Timestamps do Firestore, que não
-      // servem pro corpo do e-mail e não serializam bem em JSON.
-      const {
-        _id,
-        _colecao,
-        criadoEm,
-        slaExpiraEm,
-        aprovadoEm,
-        tecnicaAtribuida,
-        status,
-        opcoesData,
-        dataEscolhida,
-        ...solicitacaoParaEmail
-      } = item;
-
       notificarAprovacao({
         vendedorEmail: item.vendedorEmail,
         vendedorNome: nomeSolicitante,

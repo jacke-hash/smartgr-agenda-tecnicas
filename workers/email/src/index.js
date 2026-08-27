@@ -202,6 +202,7 @@ async function handleNotificarAprovacao(request, env, headers) {
           <li><strong>Solicitante:</strong> ${vendedorNome || '—'}</li>
           <li><strong>Técnica responsável:</strong> ${tecnicaNome}</li>
           <li><strong>Data:</strong> ${formatarLinhaData(dataHora, tipoReserva)}</li>
+          <li><strong>Participantes:</strong> ${solicitacao?.participantes?.length ?? '—'}</li>
         </ul>
         <p>Favor providenciar café/atendimento para o dia.</p>
       `
