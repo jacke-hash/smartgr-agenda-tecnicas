@@ -284,24 +284,36 @@ function diasDaOpcao(opcao, tipoReserva) {
   return dias;
 }
 
-// Uma chamada freeBusy por técnica cobrindo o intervalo [menor início, maior
-// término] entre todas as janelas de todas as opções — mais barato que uma
-// chamada por combinação técnica×opção×dia. Overlap é checado localmente
-// depois, opção por opção (conflito = QUALQUER janela daquela opção bate
-// com algum bloco ocupado real da técnica).
 // Domingo ocupado (qualquer coisa na agenda dela) = segunda inteira
 // indisponível — regra de descanso, independente de que compromisso é.
-// Retorna a janela do dia inteiro de domingo (Brasília) pra cada opção que
-// tenha algum dia caindo numa segunda-feira; usado só pra ampliar o range da
-// consulta freeBusy e depois checar overlap, não entra nas janelas normais.
-function janelasDomingoAntesDaSegunda(opcao, tipoReserva) {
+// Retorna as datas ISO de domingo (uma por segunda-feira que a opção
+// cobre) que precisam ser checadas.
+function domingosAntesDeSegunda(opcao, tipoReserva) {
   return diasDaOpcao(opcao, tipoReserva)
     .filter((dia) => diaDaSemana(dia) === 1)
-    .map((segunda) => {
-      const domingo = diaAnteriorISO(segunda);
-      const inicioMs = meiaNoiteBrasiliaMs(domingo);
-      return { inicioMs, fimMs: inicioMs + DIA_MS };
-    });
+    .map(diaAnteriorISO);
+}
+
+// Evento "dia inteiro" (start.date, sem hora) nasce com transparency
+// "transparent" por padrão no Google Calendar — o freeBusy.query IGNORA
+// esses eventos (trata como livre), mesmo que apareçam na agenda. A regra
+// do domingo é "qualquer coisa na agenda", então essa checagem usa
+// events.list (todos os eventos reais, não filtra por transparency) em vez
+// de freeBusy — só ela precisa disso, o conflito por horário normal
+// continua em freeBusy (aí sim faz sentido respeitar "marcada como livre").
+function eventoTocaDia(evento, diaISO) {
+  if (evento.start?.date) {
+    const fim = evento.end?.date || evento.start.date;
+    return evento.start.date <= diaISO && diaISO < fim;
+  }
+  if (evento.start?.dateTime && evento.end?.dateTime) {
+    const diaInicioMs = meiaNoiteBrasiliaMs(diaISO);
+    const diaFimMs = diaInicioMs + DIA_MS;
+    const evInicioMs = new Date(evento.start.dateTime).getTime();
+    const evFimMs = new Date(evento.end.dateTime).getTime();
+    return evInicioMs < diaFimMs && evFimMs > diaInicioMs;
+  }
+  return false;
 }
 
 async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva) {
@@ -309,36 +321,61 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva) 
   const { access_token: accessToken } = await refreshAccessToken(env, refreshToken);
 
   const janelasPorOpcao = opcoesData.map((o) => janelasDaOpcao(o, tipoReserva));
-  const janelasDomingoPorOpcao = opcoesData.map((o) => janelasDomingoAntesDaSegunda(o, tipoReserva));
-  const todasJanelas = [...janelasPorOpcao.flat(), ...janelasDomingoPorOpcao.flat()];
-  if (todasJanelas.length === 0) return opcoesData.map(() => false);
-  const timeMin = new Date(Math.min(...todasJanelas.map((j) => j.inicioMs))).toISOString();
-  const timeMax = new Date(Math.max(...todasJanelas.map((j) => j.fimMs))).toISOString();
+  const domingosPorOpcao = opcoesData.map((o) => domingosAntesDeSegunda(o, tipoReserva));
+  const todasJanelas = janelasPorOpcao.flat();
+  const todosDomingos = [...new Set(domingosPorOpcao.flat())];
 
-  const resp = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ timeMin, timeMax, items: [{ id: 'primary' }] })
-  });
+  if (todasJanelas.length === 0 && todosDomingos.length === 0) return opcoesData.map(() => false);
 
-  if (!resp.ok) {
-    console.error(`verificar-conflitos: freeBusy falhou pra técnica ${tecnica.id}:`, resp.status, await resp.text());
-    return null;
+  // Conflito por horário (comportamento existente): uma chamada freeBusy
+  // cobrindo o intervalo [menor início, maior término] entre todas as
+  // janelas de todas as opções.
+  let ocupadoPorHorario = [];
+  if (todasJanelas.length > 0) {
+    const timeMin = new Date(Math.min(...todasJanelas.map((j) => j.inicioMs))).toISOString();
+    const timeMax = new Date(Math.max(...todasJanelas.map((j) => j.fimMs))).toISOString();
+    const resp = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timeMin, timeMax, items: [{ id: 'primary' }] })
+    });
+    if (!resp.ok) {
+      console.error(`verificar-conflitos: freeBusy falhou pra técnica ${tecnica.id}:`, resp.status, await resp.text());
+      return null;
+    }
+    ocupadoPorHorario = (await resp.json()).calendars?.primary?.busy || [];
   }
 
-  const data = await resp.json();
-  const ocupado = data.calendars?.primary?.busy || [];
+  // Eventos reais (qualquer transparency) só pros domingos que importam.
+  let eventosDomingo = [];
+  if (todosDomingos.length > 0) {
+    const inicioMs = Math.min(...todosDomingos.map(meiaNoiteBrasiliaMs));
+    const fimMs = Math.max(...todosDomingos.map((d) => meiaNoiteBrasiliaMs(d) + DIA_MS));
+    const resp = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(new Date(inicioMs).toISOString())}&timeMax=${encodeURIComponent(new Date(fimMs).toISOString())}&singleEvents=true`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!resp.ok) {
+      console.error(`verificar-conflitos: events.list (domingo) falhou pra técnica ${tecnica.id}:`, resp.status, await resp.text());
+      return null;
+    }
+    eventosDomingo = (await resp.json()).items || [];
+  }
 
-  const temOverlap = (janelas) =>
+  const temOverlapHorario = (janelas) =>
     janelas.some((j) =>
-      ocupado.some((b) => {
+      ocupadoPorHorario.some((b) => {
         const bInicio = new Date(b.start).getTime();
         const bFim = new Date(b.end).getTime();
         return j.inicioMs < bFim && j.fimMs > bInicio;
       })
     );
 
-  return janelasPorOpcao.map((janelas, idx) => temOverlap(janelas) || temOverlap(janelasDomingoPorOpcao[idx]));
+  const domingoOcupado = (diaISO) => eventosDomingo.some((e) => eventoTocaDia(e, diaISO));
+
+  return opcoesData.map(
+    (_, idx) => temOverlapHorario(janelasPorOpcao[idx]) || domingosPorOpcao[idx].some(domingoOcupado)
+  );
 }
 
 async function handleVerificarConflitos(request, env, headers) {
