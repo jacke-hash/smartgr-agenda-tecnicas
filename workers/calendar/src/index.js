@@ -127,6 +127,18 @@ async function handleOauthCallback(url, env, headers) {
   }
 }
 
+function montarDescricaoEvento(tipo, tipoTreinamento, nomeSolicitante, solicitacao) {
+  const tipoLabel = TIPO_LABEL[tipo] || tipo;
+  return [
+    `Tipo: ${tipoLabel}`,
+    tipoTreinamento ? `Treinamento: ${tipoTreinamento === 'interno' ? 'Interno' : 'Externo'}` : null,
+    `Solicitante: ${nomeSolicitante}`,
+    ...formatarDescricaoSolicitacao(tipo, solicitacao)
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 async function handleCriarEvento(request, env, headers) {
   let body;
   try {
@@ -160,14 +172,7 @@ async function handleCriarEvento(request, env, headers) {
 
   const eventBody = {
     summary: `Treinamento ${tipoLabel} — ${nomeSolicitante}`,
-    description: [
-      `Tipo: ${tipoLabel}`,
-      tipoTreinamento ? `Treinamento: ${tipoTreinamento === 'interno' ? 'Interno' : 'Externo'}` : null,
-      `Solicitante: ${nomeSolicitante}`,
-      ...formatarDescricaoSolicitacao(tipo, solicitacao)
-    ]
-      .filter(Boolean)
-      .join('\n'),
+    description: montarDescricaoEvento(tipo, tipoTreinamento, nomeSolicitante, solicitacao),
     location,
     start: ehPeriodo
       ? { dateTime: `${dataHora.dataInicio}T${dataHora.horaInicio}:00`, timeZone: 'America/Sao_Paulo' }

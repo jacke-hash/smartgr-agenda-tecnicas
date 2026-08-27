@@ -16,6 +16,9 @@ function fromFirestoreValue(val) {
   if ('doubleValue' in val) return val.doubleValue;
   if ('integerValue' in val) return Number(val.integerValue);
   if ('timestampValue' in val) return val.timestampValue;
+  if ('nullValue' in val) return null;
+  if ('arrayValue' in val) return (val.arrayValue.values || []).map(fromFirestoreValue);
+  if ('mapValue' in val) return fromFirestoreFields(val.mapValue.fields);
   return null;
 }
 
