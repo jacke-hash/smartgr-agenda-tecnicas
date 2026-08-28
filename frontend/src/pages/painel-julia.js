@@ -2,6 +2,7 @@ import {
   collection,
   query,
   where,
+  limit,
   onSnapshot,
   doc,
   updateDoc,
@@ -466,6 +467,51 @@ export function renderPainelJulia(container) {
         }
       } catch (err) {
         msgEl.innerHTML = `<div class="error-note">Aprovado, mas falha ao criar evento no Google Calendar: ${err.message}</div>`;
+      }
+    }
+
+    // Mesmo critério do e-mail de café/atendimento (workers/email, gatilho
+    // pra Nayra): interno + presencial + unidade Zona Sul. Além do e-mail,
+    // cria o MESMO evento também na agenda dela — reaproveita o /criar-evento
+    // genérico do worker de calendar, só trocando o tecnicaId. Nayra tem um
+    // doc próprio na coleção `tecnicas` (papel: 'coordenadora', ativo: false
+    // pra não aparecer no dropdown de atribuição nem entrar na checagem de
+    // conflito) que ela conecta pela mesma tela `#/conectar-agenda`.
+    if (
+      calendarWorkerUrl &&
+      item.tipo === 'consumidor_final' &&
+      item.tipoTreinamento === 'interno' &&
+      modalidade === 'presencial' &&
+      item.unidade === 'Zona Sul'
+    ) {
+      try {
+        const nayraSnap = await getDocs(
+          query(collection(db, 'tecnicas'), where('papel', '==', 'coordenadora'), limit(1))
+        );
+        const nayraDoc = nayraSnap.docs[0];
+        if (nayraDoc?.data()?.refreshTokenEncrypted) {
+          const respNayra = await fetch(`${calendarWorkerUrl}/criar-evento`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tecnicaId: nayraDoc.id,
+              tipo: item.tipo,
+              tipoTreinamento: item.tipoTreinamento || null,
+              tipoReserva: item.tipoReserva || 'unico',
+              modalidade,
+              endereco,
+              nomeSolicitante,
+              dataHora,
+              solicitacao: solicitacaoParaEmail
+            })
+          });
+          if (!respNayra.ok) {
+            const erroNayra = await respNayra.json().catch(() => ({}));
+            msgEl.innerHTML += `<div class="error-note">Aprovado, mas falha ao criar evento na agenda da Nayra: ${erroNayra.message || 'erro desconhecido'}</div>`;
+          }
+        }
+      } catch (err) {
+        msgEl.innerHTML += `<div class="error-note">Aprovado, mas falha ao criar evento na agenda da Nayra: ${err.message}</div>`;
       }
     }
 
