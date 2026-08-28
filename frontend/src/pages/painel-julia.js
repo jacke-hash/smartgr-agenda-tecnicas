@@ -451,6 +451,7 @@ export function renderPainelJulia(container) {
             tipoReserva: item.tipoReserva || 'unico',
             modalidade,
             endereco,
+            unidade: item.unidade || null,
             nomeSolicitante,
             dataHora,
             solicitacao: solicitacaoParaEmail
@@ -500,6 +501,7 @@ export function renderPainelJulia(container) {
               tipoReserva: item.tipoReserva || 'unico',
               modalidade,
               endereco,
+              unidade: item.unidade || null,
               nomeSolicitante,
               dataHora,
               solicitacao: solicitacaoParaEmail

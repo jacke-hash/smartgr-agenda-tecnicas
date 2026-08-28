@@ -139,10 +139,14 @@ function montarDescricaoEvento(tipo, tipoTreinamento, nomeSolicitante, solicitac
     .join('\n');
 }
 
-function montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, endereco, nomeSolicitante, dataHora, solicitacao }) {
+function montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, endereco, unidade, nomeSolicitante, dataHora, solicitacao }) {
   const tipoLabel = TIPO_LABEL[tipo] || tipo;
   const ehPeriodo = tipoReserva === 'periodo';
-  const location = modalidade === 'online' ? 'Online' : formatEndereco(endereco) || 'A confirmar';
+  // Treinamento interno (consumidor_final) não tem endereço — o local é a
+  // própria unidade SmartGR selecionada no formulário (ex: "Zona Sul"), não
+  // um endereço de cliente. Sem isso, location caía sempre em "A confirmar"
+  // mesmo já sabendo exatamente onde é.
+  const location = modalidade === 'online' ? 'Online' : unidade || formatEndereco(endereco) || 'A confirmar';
 
   return {
     summary: `Treinamento ${tipoLabel} — ${nomeSolicitante}`,
@@ -165,7 +169,7 @@ async function handleCriarEvento(request, env, headers) {
     return json({ status: 'error', message: 'body inválido' }, 400, headers);
   }
 
-  const { tecnicaId, tipo, tipoTreinamento, tipoReserva, modalidade, endereco, nomeSolicitante, dataHora, solicitacao } = body;
+  const { tecnicaId, tipo, tipoTreinamento, tipoReserva, modalidade, endereco, unidade, nomeSolicitante, dataHora, solicitacao } = body;
   const ehPeriodo = tipoReserva === 'periodo';
   const camposDataOk = ehPeriodo
     ? Boolean(dataHora?.dataInicio && dataHora?.dataFim && dataHora?.horaInicio && dataHora?.horaTermino)
@@ -185,7 +189,7 @@ async function handleCriarEvento(request, env, headers) {
   const { access_token: accessToken } = await refreshAccessToken(env, refreshToken);
   console.log('criar-evento: access token obtido, chamando Calendar API...');
 
-  const eventBody = montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, endereco, nomeSolicitante, dataHora, solicitacao });
+  const eventBody = montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, endereco, unidade, nomeSolicitante, dataHora, solicitacao });
 
   const resp = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
     method: 'POST',
