@@ -139,6 +139,24 @@ function montarDescricaoEvento(tipo, tipoTreinamento, nomeSolicitante, solicitac
     .join('\n');
 }
 
+function montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, endereco, nomeSolicitante, dataHora, solicitacao }) {
+  const tipoLabel = TIPO_LABEL[tipo] || tipo;
+  const ehPeriodo = tipoReserva === 'periodo';
+  const location = modalidade === 'online' ? 'Online' : formatEndereco(endereco) || 'A confirmar';
+
+  return {
+    summary: `Treinamento ${tipoLabel} — ${nomeSolicitante}`,
+    description: montarDescricaoEvento(tipo, tipoTreinamento, nomeSolicitante, solicitacao),
+    location,
+    start: ehPeriodo
+      ? { dateTime: `${dataHora.dataInicio}T${dataHora.horaInicio}:00`, timeZone: 'America/Sao_Paulo' }
+      : { dateTime: `${dataHora.data}T${dataHora.horaInicio}:00`, timeZone: 'America/Sao_Paulo' },
+    end: ehPeriodo
+      ? { dateTime: `${dataHora.dataFim}T${dataHora.horaTermino}:00`, timeZone: 'America/Sao_Paulo' }
+      : { dateTime: `${dataHora.data}T${dataHora.horaTermino}:00`, timeZone: 'America/Sao_Paulo' }
+  };
+}
+
 async function handleCriarEvento(request, env, headers) {
   let body;
   try {
@@ -167,20 +185,7 @@ async function handleCriarEvento(request, env, headers) {
   const { access_token: accessToken } = await refreshAccessToken(env, refreshToken);
   console.log('criar-evento: access token obtido, chamando Calendar API...');
 
-  const tipoLabel = TIPO_LABEL[tipo] || tipo;
-  const location = modalidade === 'online' ? 'Online' : formatEndereco(endereco) || 'A confirmar';
-
-  const eventBody = {
-    summary: `Treinamento ${tipoLabel} — ${nomeSolicitante}`,
-    description: montarDescricaoEvento(tipo, tipoTreinamento, nomeSolicitante, solicitacao),
-    location,
-    start: ehPeriodo
-      ? { dateTime: `${dataHora.dataInicio}T${dataHora.horaInicio}:00`, timeZone: 'America/Sao_Paulo' }
-      : { dateTime: `${dataHora.data}T${dataHora.horaInicio}:00`, timeZone: 'America/Sao_Paulo' },
-    end: ehPeriodo
-      ? { dateTime: `${dataHora.dataFim}T${dataHora.horaTermino}:00`, timeZone: 'America/Sao_Paulo' }
-      : { dateTime: `${dataHora.data}T${dataHora.horaTermino}:00`, timeZone: 'America/Sao_Paulo' }
-  };
+  const eventBody = montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, endereco, nomeSolicitante, dataHora, solicitacao });
 
   const resp = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
     method: 'POST',
