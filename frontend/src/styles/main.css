@@ -495,12 +495,14 @@ input.invalid,select.invalid{border-color:var(--danger);}
 .escala-chip .l{color:var(--text-soft);}
 .escala-chip.confirmado{border-left-color:var(--warn);}
 .escala-chip.sincronizado{border-left-color:var(--success);background:var(--success-bg);}
+.escala-chip.real{border-left-style:dashed;border-left-color:var(--text-soft);background:#fff;color:var(--text-soft);cursor:default;}
 
-.escala-legenda{display:flex;gap:20px;justify-content:center;margin-top:18px;font-size:12.5px;color:var(--text-soft);}
+.escala-legenda{display:flex;gap:20px;justify-content:center;margin-top:18px;font-size:12.5px;color:var(--text-soft);flex-wrap:wrap;}
 .escala-legenda span{display:inline-flex;align-items:center;gap:6px;}
 .escala-dot{width:10px;height:10px;border-radius:50%;display:inline-block;}
 .escala-dot.confirmado{background:var(--warn);}
 .escala-dot.sincronizado{background:var(--success);}
+.escala-dot.real{background:#fff;border:2px dashed var(--text-soft);}
 
 .escala-dia-wrap{overflow-x:auto;}
 .escala-dia-grid{display:grid;gap:0;min-width:700px;}
@@ -530,6 +532,15 @@ input.invalid,select.invalid{border-color:var(--danger);}
 .escala-bloco .l{color:var(--text-soft);}
 .escala-bloco.confirmado{border-left-color:var(--warn);}
 .escala-bloco.sincronizado{border-left-color:var(--success);background:var(--success-bg);}
+.escala-bloco.real{border-left-style:dashed;border-left-color:var(--text-soft);background:#fff;color:var(--text-soft);cursor:default;}
+.escala-bloco.real:hover{box-shadow:none;}
+
+.escala-dia-inteiro-eixo{border-right:1px solid var(--border);border-bottom:1px solid var(--border);}
+.escala-dia-inteiro-faixa{
+  border-right:1px solid var(--border);border-bottom:1px solid var(--border);
+  padding:4px;min-height:18px;display:flex;flex-direction:column;gap:2px;
+}
+.escala-dia-inteiro-faixa .escala-chip.real{margin-bottom:0;padding:2px 6px;font-size:10px;}
 
 .escala-tecnicas-checklist{display:flex;flex-wrap:wrap;gap:10px 16px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);}
 .escala-tecnica-check{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}

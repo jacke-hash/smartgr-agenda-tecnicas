@@ -17,6 +17,12 @@ const TIPO_LABEL = {
 
 const COLECOES_SOLICITACOES = ['solicitacoes_consumidor_final', 'solicitacoes_revenda', 'solicitacoes_workshop'];
 
+// "Local de trabalho" e aniversário automático de contato são recursos do
+// Google Calendar só informativos — nunca representam indisponibilidade
+// real nem são um "evento" que a Julia precisa ver na escala. Compartilhado
+// entre a checagem de conflito e a listagem de eventos reais da técnica.
+const TIPOS_EVENTO_IGNORADOS = new Set(['workingLocation', 'birthday']);
+
 function json(data, status, headers) {
   return Response.json(data, { status: status || 200, headers });
 }
@@ -352,6 +358,39 @@ async function handleEscalaVerificarEventos(request, env, headers) {
   return json({ status: 'ok', resultados }, 200, headers);
 }
 
+// Mostra na grade o que já está na agenda real da técnica (Beauty Fair,
+// Folga, treinamento lançado manualmente etc) — só leitura, não vira doc em
+// `escalas`. Sempre reflete a agenda de verdade, sem risco de duplicar
+// nada nem de "item importado" ficar desatualizado depois de editado só no
+// Google.
+async function handleEscalaEventosTecnica(request, env, headers) {
+  const body = await request.json();
+  const { tecnicaId, dataInicio, dataFim } = body;
+  if (!tecnicaId || !dataInicio || !dataFim) {
+    return json({ status: 'error', message: 'campos obrigatórios ausentes' }, 400, headers);
+  }
+
+  const { accessToken, erro } = await acessoTecnicaOuErro(env, tecnicaId, headers);
+  if (erro) return erro;
+
+  const timeMin = new Date(`${dataInicio}T00:00:00-03:00`).toISOString();
+  const timeMax = new Date(new Date(`${dataFim}T00:00:00-03:00`).getTime() + DIA_MS).toISOString();
+
+  const resp = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!resp.ok) {
+    return json({ status: 'error', message: `Falha ao listar eventos: ${await resp.text()}` }, 502, headers);
+  }
+
+  const eventos = ((await resp.json()).items || [])
+    .filter((e) => !TIPOS_EVENTO_IGNORADOS.has(e.eventType) && e.status !== 'cancelled')
+    .map((e) => ({ id: e.id, summary: e.summary || 'Sem título', location: e.location || null, start: e.start, end: e.end }));
+
+  return json({ status: 'ok', eventos }, 200, headers);
+}
+
 const DIA_MS = 24 * 60 * 60 * 1000;
 
 function offsetBrasilia(dataHora, campoHora) {
@@ -513,10 +552,8 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva, 
   // "Local de trabalho: Escritório" é eventType 'workingLocation' — recurso
   // do Google Calendar só pra indicar ONDE ela vai estar naquele dia, não um
   // compromisso de verdade. Marcar "Escritório" a semana inteira não pode
-  // bloquear escala nenhuma. 'birthday' (aniversário automático de contato)
-  // é a mesma categoria — nunca representa indisponibilidade real.
-  const IGNORAR_TIPOS_EVENTO = new Set(['workingLocation', 'birthday']);
-  const eventos = ((await resp.json()).items || []).filter((e) => !IGNORAR_TIPOS_EVENTO.has(e.eventType));
+  // bloquear escala nenhuma (TIPOS_EVENTO_IGNORADOS, topo do arquivo).
+  const eventos = ((await resp.json()).items || []).filter((e) => !TIPOS_EVENTO_IGNORADOS.has(e.eventType));
 
   // Complementar (não substitui a checagem real acima): solicitações já
   // aprovadas pra essa técnica no Firestore, cobrindo o gap raro de o
@@ -669,6 +706,15 @@ export default {
         return await handleEscalaVerificarEventos(request, env, headers);
       } catch (err) {
         console.error('escala/verificar-eventos: exceção não tratada:', err.stack || err.message || err);
+        return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
+      }
+    }
+
+    if (url.pathname === '/escala/eventos-tecnica' && request.method === 'POST') {
+      try {
+        return await handleEscalaEventosTecnica(request, env, headers);
+      } catch (err) {
+        console.error('escala/eventos-tecnica: exceção não tratada:', err.stack || err.message || err);
         return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
       }
     }

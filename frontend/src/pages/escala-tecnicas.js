@@ -45,6 +45,7 @@ export function renderEscalaTecnicas(container, navigate, user) {
   let modo = 'semana';
   let diaSelecionado = null;
   let escalas = [];
+  let eventosReaisPorTecnica = {};
   let modalAberto = null;
   let avisoSincronizacao = null;
 
@@ -57,6 +58,69 @@ export function renderEscalaTecnicas(container, navigate, user) {
     const fimSemana = somarDiasISO(inicioSemana, 6);
     const snap = await getDocs(query(collection(db, 'escalas'), where('data', '>=', inicioSemana), where('data', '<=', fimSemana)));
     escalas = snap.docs.map((d) => ({ _id: d.id, ...d.data() }));
+  }
+
+  // Mostra na grade o que já está na agenda real da técnica (Beauty Fair,
+  // Folga, treinamento lançado manualmente etc), além dos itens criados por
+  // este painel — só leitura, nunca vira doc em `escalas` (decisão: sempre
+  // refletir a agenda de verdade em vez de importar/duplicar).
+  async function carregarEventosReaisSemana() {
+    const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
+    eventosReaisPorTecnica = {};
+    if (!calendarWorkerUrl) return;
+
+    const fimSemana = somarDiasISO(inicioSemana, 6);
+    await Promise.all(
+      tecnicas.map(async (t) => {
+        if (!t.refreshTokenEncrypted) return;
+        try {
+          const resp = await fetch(`${calendarWorkerUrl}/escala/eventos-tecnica`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tecnicaId: t.id, dataInicio: inicioSemana, dataFim: fimSemana })
+          });
+          if (!resp.ok) return;
+          eventosReaisPorTecnica[t.email] = (await resp.json()).eventos || [];
+        } catch (err) {
+          console.error(`Falha ao carregar eventos reais de ${t.email}:`, err);
+        }
+      })
+    );
+  }
+
+  // Todo evento real cujo id já é o google_event_id de algum item de escala
+  // desta semana já aparece como item "confirmado/sincronizado" — mostrar
+  // de novo aqui seria duplicar o mesmo compromisso na tela.
+  function idsJaMostradosComoEscala() {
+    const set = new Set();
+    escalas.forEach((e) => Object.values(e.google_event_ids || {}).forEach((id) => id && set.add(id)));
+    return set;
+  }
+
+  // Google devolve end.date EXCLUSIVO em evento de dia inteiro (ex: 31/08 a
+  // 05/09 cobre até o dia 04) — normaliza pra um range [diaInicio, diaFim]
+  // inclusivo, igual o resto do código já trabalha com datas.
+  function eventoRealParaItemVisual(evento) {
+    const diaInicio = evento.start.date || evento.start.dateTime.slice(0, 10);
+    const diaFim = evento.end.date ? somarDiasISO(evento.end.date, -1) : evento.end.dateTime.slice(0, 10);
+    return {
+      id: evento.id,
+      diaInicio,
+      diaFim,
+      diaInteiro: Boolean(evento.start.date),
+      horario_inicio: evento.start.dateTime ? evento.start.dateTime.slice(11, 16) : null,
+      horario_fim: evento.end.dateTime ? evento.end.dateTime.slice(11, 16) : null,
+      evento: evento.summary,
+      local: evento.location
+    };
+  }
+
+  function eventosReaisDaTecnicaNoDia(tecnicaEmail, diaISO) {
+    const idsEscala = idsJaMostradosComoEscala();
+    return (eventosReaisPorTecnica[tecnicaEmail] || [])
+      .filter((ev) => !idsEscala.has(ev.id))
+      .map(eventoRealParaItemVisual)
+      .filter((item) => item.diaInicio <= diaISO && diaISO <= item.diaFim);
   }
 
   function escalasDoDia(diaISO) {
@@ -134,6 +198,7 @@ export function renderEscalaTecnicas(container, navigate, user) {
       <div class="escala-legenda">
         <span><span class="escala-dot confirmado"></span> Confirmado</span>
         <span><span class="escala-dot sincronizado"></span> Sincronizado com Google Agenda</span>
+        <span><span class="escala-dot real"></span> Já está na agenda dela (não editável aqui)</span>
       </div>
     `;
   }
@@ -143,6 +208,16 @@ export function renderEscalaTecnicas(container, navigate, user) {
     return `
       <div class="escala-chip ${sincronizado ? 'sincronizado' : 'confirmado'}">
         <div class="h">${item.horario_inicio}–${item.horario_fim}</div>
+        <div class="e">${item.evento}</div>
+        ${item.local ? `<div class="l">${item.local}</div>` : ''}
+      </div>
+    `;
+  }
+
+  function renderChipReal(item) {
+    return `
+      <div class="escala-chip real" title="Já está na agenda do Google dela — edite direto lá.">
+        <div class="h">${item.diaInteiro ? 'Dia inteiro' : `${item.horario_inicio}–${item.horario_fim}`}</div>
         <div class="e">${item.evento}</div>
         ${item.local ? `<div class="l">${item.local}</div>` : ''}
       </div>
@@ -176,7 +251,14 @@ export function renderEscalaTecnicas(container, navigate, user) {
               <tr>
                 <td class="escala-tecnica-nome">${t.nome}</td>
                 ${dias
-                  .map((d) => `<td class="escala-celula">${escalasDaTecnicaNoDia(t.email, d).map((it) => renderChip(it, t.email)).join('')}</td>`)
+                  .map(
+                    (d) => `
+                  <td class="escala-celula">
+                    ${escalasDaTecnicaNoDia(t.email, d).map((it) => renderChip(it, t.email)).join('')}
+                    ${eventosReaisDaTecnicaNoDia(t.email, d).map(renderChipReal).join('')}
+                  </td>
+                `
+                  )
                   .join('')}
               </tr>
             `
@@ -196,7 +278,11 @@ export function renderEscalaTecnicas(container, navigate, user) {
   function limitesHorarioDoDia(diaISO) {
     let min = 8;
     let max = 20;
-    escalasDoDia(diaISO).forEach((item) => {
+    const itensComHorario = [
+      ...escalasDoDia(diaISO),
+      ...tecnicas.flatMap((t) => eventosReaisDaTecnicaNoDia(t.email, diaISO)).filter((it) => !it.diaInteiro)
+    ];
+    itensComHorario.forEach((item) => {
       const inicioH = Math.floor(minutosDoHorario(item.horario_inicio) / 60);
       const fimH = Math.ceil(minutosDoHorario(item.horario_fim) / 60);
       if (inicioH < min) min = inicioH;
@@ -231,12 +317,21 @@ export function renderEscalaTecnicas(container, navigate, user) {
             )
             .join('')}
 
+          <div class="escala-dia-inteiro-eixo"></div>
+          ${tecnicas
+            .map((t) => {
+              const diaInteiroReais = eventosReaisDaTecnicaNoDia(t.email, diaSelecionado).filter((ev) => ev.diaInteiro);
+              return `<div class="escala-dia-inteiro-faixa">${diaInteiroReais.map((ev) => `<span class="escala-chip real">${ev.evento}</span>`).join('')}</div>`;
+            })
+            .join('')}
+
           <div class="escala-dia-eixo" style="height:${alturaTotalPx}px;">
             ${horas.map((h) => `<div class="escala-hora-label" style="top:${(h - horaMin) * ALTURA_HORA_PX}px;">${String(h).padStart(2, '0')}:00</div>`).join('')}
           </div>
           ${tecnicas
             .map((t) => {
               const itens = escalasDaTecnicaNoDia(t.email, diaSelecionado);
+              const timedReais = eventosReaisDaTecnicaNoDia(t.email, diaSelecionado).filter((ev) => !ev.diaInteiro);
               return `
               <div class="escala-dia-coluna" style="height:${alturaTotalPx}px;">
                 ${horas.map((h) => `<div class="escala-hora-linha" style="top:${(h - horaMin) * ALTURA_HORA_PX}px;"></div>`).join('')}
@@ -247,6 +342,19 @@ export function renderEscalaTecnicas(container, navigate, user) {
                     const sincronizado = Boolean(item.google_event_ids?.[t.email]);
                     return `
                     <div class="escala-bloco ${sincronizado ? 'sincronizado' : 'confirmado'}" style="top:${topPx}px;height:${alturaPx}px;" data-editar="${item._id}">
+                      <div class="h">${item.horario_inicio}–${item.horario_fim}</div>
+                      <div class="e">${item.evento}</div>
+                      ${item.local ? `<div class="l">${item.local}</div>` : ''}
+                    </div>
+                  `;
+                  })
+                  .join('')}
+                ${timedReais
+                  .map((item) => {
+                    const topPx = ((minutosDoHorario(item.horario_inicio) - horaMin * 60) / 60) * ALTURA_HORA_PX;
+                    const alturaPx = Math.max(24, ((minutosDoHorario(item.horario_fim) - minutosDoHorario(item.horario_inicio)) / 60) * ALTURA_HORA_PX);
+                    return `
+                    <div class="escala-bloco real" style="top:${topPx}px;height:${alturaPx}px;" title="Já está na agenda do Google dela — edite direto lá.">
                       <div class="h">${item.horario_inicio}–${item.horario_fim}</div>
                       <div class="e">${item.evento}</div>
                       ${item.local ? `<div class="l">${item.local}</div>` : ''}
@@ -520,7 +628,7 @@ export function renderEscalaTecnicas(container, navigate, user) {
 
   async function carregarSemanaEReconciliar() {
     await carregarEscalasSemana();
-    await reconciliarEventosApagadosManualmente();
+    await Promise.all([reconciliarEventosApagadosManualmente(), carregarEventosReaisSemana()]);
     render();
   }
 
