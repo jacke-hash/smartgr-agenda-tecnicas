@@ -63,6 +63,68 @@ export function renderEscalaTecnicas(container, navigate, user) {
     return escalas.filter((e) => e.data === diaISO).sort((a, b) => a.horario_inicio.localeCompare(b.horario_inicio));
   }
 
+  // Google não avisa a gente quando a técnica apaga um evento direto na
+  // agenda dela — sem webhook configurado (over-engineering pro tamanho
+  // desse time), a checagem roda toda vez que a semana é carregada. Se o
+  // evento sumiu de verdade, tira a técnica do item (ou apaga o item
+  // inteiro se ela era a única) — sem isso, o painel continuaria mostrando
+  // como "sincronizado" um evento que não existe mais na agenda real.
+  async function reconciliarEventosApagadosManualmente() {
+    const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
+    if (!calendarWorkerUrl) return;
+
+    const itensParaChecar = [];
+    escalas.forEach((e) => {
+      Object.entries(e.google_event_ids || {}).forEach(([email, eventId]) => {
+        const tecnicaId = tecnicas.find((t) => t.email === email)?.id;
+        if (tecnicaId && eventId) itensParaChecar.push({ escalaId: e._id, email, tecnicaId, eventId });
+      });
+    });
+    if (itensParaChecar.length === 0) return;
+
+    let resultados;
+    try {
+      const resp = await fetch(`${calendarWorkerUrl}/escala/verificar-eventos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itens: itensParaChecar.map(({ tecnicaId, eventId }) => ({ tecnicaId, eventId })) })
+      });
+      if (!resp.ok) return;
+      resultados = (await resp.json()).resultados || [];
+    } catch (err) {
+      console.error('Falha ao reconciliar eventos apagados manualmente:', err);
+      return;
+    }
+
+    const emailsRemovidosPorEscala = {};
+    itensParaChecar.forEach((item, idx) => {
+      if (resultados[idx] && !resultados[idx].existe) {
+        (emailsRemovidosPorEscala[item.escalaId] = emailsRemovidosPorEscala[item.escalaId] || []).push(item.email);
+      }
+    });
+    if (Object.keys(emailsRemovidosPorEscala).length === 0) return;
+
+    for (const [escalaId, emailsRemovidos] of Object.entries(emailsRemovidosPorEscala)) {
+      const escala = escalas.find((e) => e._id === escalaId);
+      if (!escala) continue;
+      const tecnicasRestantes = (escala.tecnicas || []).filter((email) => !emailsRemovidos.includes(email));
+      const eventIdsRestantes = { ...(escala.google_event_ids || {}) };
+      emailsRemovidos.forEach((email) => delete eventIdsRestantes[email]);
+
+      try {
+        if (tecnicasRestantes.length === 0) {
+          await deleteDoc(doc(db, 'escalas', escalaId));
+        } else {
+          await updateDoc(doc(db, 'escalas', escalaId), { tecnicas: tecnicasRestantes, google_event_ids: eventIdsRestantes });
+        }
+      } catch (err) {
+        console.error(`Falha ao atualizar escala ${escalaId} após reconciliação:`, err);
+      }
+    }
+
+    await carregarEscalasSemana();
+  }
+
   function escalasDaTecnicaNoDia(tecnicaEmail, diaISO) {
     return escalasDoDia(diaISO).filter((e) => (e.tecnicas || []).includes(tecnicaEmail));
   }
@@ -456,14 +518,20 @@ export function renderEscalaTecnicas(container, navigate, user) {
     render();
   }
 
+  async function carregarSemanaEReconciliar() {
+    await carregarEscalasSemana();
+    await reconciliarEventosApagadosManualmente();
+    render();
+  }
+
   function attachHandlers() {
     container.querySelector('#semana-anterior')?.addEventListener('click', () => {
       inicioSemana = somarDiasISO(inicioSemana, -7);
-      carregarEscalasSemana().then(render);
+      carregarSemanaEReconciliar();
     });
     container.querySelector('#semana-proxima')?.addEventListener('click', () => {
       inicioSemana = somarDiasISO(inicioSemana, 7);
-      carregarEscalasSemana().then(render);
+      carregarSemanaEReconciliar();
     });
     container.querySelectorAll('.escala-dia-header[data-dia]').forEach((th) => {
       th.addEventListener('click', () => {
@@ -513,8 +581,7 @@ export function renderEscalaTecnicas(container, navigate, user) {
 
   async function iniciar() {
     await carregarTecnicas();
-    await carregarEscalasSemana();
-    render();
+    await carregarSemanaEReconciliar();
   }
 
   iniciar();

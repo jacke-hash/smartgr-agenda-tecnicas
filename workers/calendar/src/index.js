@@ -300,6 +300,58 @@ async function handleEscalaExcluirEvento(request, env, headers) {
   return json({ status: 'ok' }, 200, headers);
 }
 
+// Google não avisa o worker quando um evento é apagado direto na agenda da
+// técnica (sem webhook/push notification configurado — over-engineering pro
+// tamanho desse time). Em vez disso, o painel de Escala rechecha, toda vez
+// que carrega uma semana, se os eventos que ele acha que existem realmente
+// ainda existem — se a técnica apagou manualmente, o item some do painel
+// também (e não só o evento "fantasma" ficando esquecido lá).
+async function handleEscalaVerificarEventos(request, env, headers) {
+  const body = await request.json();
+  const itens = Array.isArray(body?.itens) ? body.itens : [];
+  if (itens.length === 0) return json({ status: 'ok', resultados: [] }, 200, headers);
+
+  const accessTokenPorTecnica = {};
+  async function accessTokenDe(tecnicaId) {
+    if (!(tecnicaId in accessTokenPorTecnica)) {
+      try {
+        const tecnica = await getTecnica(env, tecnicaId);
+        if (!tecnica?.refreshTokenEncrypted) throw new Error('sem agenda conectada');
+        const refreshToken = await decryptSecret(tecnica.refreshTokenEncrypted, env.TOKEN_ENCRYPTION_KEY);
+        accessTokenPorTecnica[tecnicaId] = (await refreshAccessToken(env, refreshToken)).access_token;
+      } catch (err) {
+        accessTokenPorTecnica[tecnicaId] = null;
+      }
+    }
+    return accessTokenPorTecnica[tecnicaId];
+  }
+
+  const resultados = await Promise.all(
+    itens.map(async ({ tecnicaId, eventId }) => {
+      const accessToken = await accessTokenDe(tecnicaId);
+      // Sem acesso à agenda dela (desconectou, erro) — não dá pra confirmar
+      // nada, então assume que o evento ainda existe (não apaga sem certeza).
+      if (!accessToken) return { tecnicaId, eventId, existe: true };
+
+      try {
+        const resp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (resp.status === 404 || resp.status === 410) return { tecnicaId, eventId, existe: false };
+        if (!resp.ok) return { tecnicaId, eventId, existe: true };
+        const evento = await resp.json();
+        // Cancelado (apagado mas ainda retornável por um tempo via sync) conta
+        // como "não existe mais" pro nosso propósito.
+        return { tecnicaId, eventId, existe: evento.status !== 'cancelled' };
+      } catch {
+        return { tecnicaId, eventId, existe: true };
+      }
+    })
+  );
+
+  return json({ status: 'ok', resultados }, 200, headers);
+}
+
 const DIA_MS = 24 * 60 * 60 * 1000;
 
 function offsetBrasilia(dataHora, campoHora) {
@@ -458,7 +510,13 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva, 
     console.error(`verificar-conflitos: events.list falhou pra técnica ${tecnica.id}:`, resp.status, await resp.text());
     return null;
   }
-  const eventos = (await resp.json()).items || [];
+  // "Local de trabalho: Escritório" é eventType 'workingLocation' — recurso
+  // do Google Calendar só pra indicar ONDE ela vai estar naquele dia, não um
+  // compromisso de verdade. Marcar "Escritório" a semana inteira não pode
+  // bloquear escala nenhuma. 'birthday' (aniversário automático de contato)
+  // é a mesma categoria — nunca representa indisponibilidade real.
+  const IGNORAR_TIPOS_EVENTO = new Set(['workingLocation', 'birthday']);
+  const eventos = ((await resp.json()).items || []).filter((e) => !IGNORAR_TIPOS_EVENTO.has(e.eventType));
 
   // Complementar (não substitui a checagem real acima): solicitações já
   // aprovadas pra essa técnica no Firestore, cobrindo o gap raro de o
@@ -602,6 +660,15 @@ export default {
         return await handleEscalaExcluirEvento(request, env, headers);
       } catch (err) {
         console.error('escala/excluir-evento: exceção não tratada:', err.stack || err.message || err);
+        return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
+      }
+    }
+
+    if (url.pathname === '/escala/verificar-eventos' && request.method === 'POST') {
+      try {
+        return await handleEscalaVerificarEventos(request, env, headers);
+      } catch (err) {
+        console.error('escala/verificar-eventos: exceção não tratada:', err.stack || err.message || err);
         return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
       }
     }
