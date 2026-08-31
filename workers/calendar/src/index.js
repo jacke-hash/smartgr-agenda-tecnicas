@@ -210,6 +210,96 @@ async function handleCriarEvento(request, env, headers) {
   return json({ status: 'ok', eventId: evento.id, htmlLink: evento.htmlLink }, 200, headers);
 }
 
+// --- Escala geral (painel da Julia) ---
+// Evento/local de texto livre — não é uma solicitação (sem tipo/tipoTreinamento
+// /solicitacao), então não passa por montarEventBody. Mesma mecânica de
+// decriptar refresh token → trocar por access token que handleCriarEvento já
+// usa, só o eventBody é montado direto dos campos da escala.
+async function acessoTecnicaOuErro(env, tecnicaId, headers) {
+  const tecnica = await getTecnica(env, tecnicaId);
+  if (!tecnica) return { erro: json({ status: 'error', message: 'técnica não encontrada' }, 404, headers) };
+  if (!tecnica.refreshTokenEncrypted) {
+    return { erro: json({ status: 'error', message: 'técnica ainda não conectou a agenda' }, 409, headers) };
+  }
+  const refreshToken = await decryptSecret(tecnica.refreshTokenEncrypted, env.TOKEN_ENCRYPTION_KEY);
+  const { access_token: accessToken } = await refreshAccessToken(env, refreshToken);
+  return { accessToken };
+}
+
+function montarEventBodyEscala({ evento, local, data, horarioInicio, horarioFim }) {
+  return {
+    summary: evento,
+    location: local || 'A confirmar',
+    start: { dateTime: `${data}T${horarioInicio}:00`, timeZone: 'America/Sao_Paulo' },
+    end: { dateTime: `${data}T${horarioFim}:00`, timeZone: 'America/Sao_Paulo' }
+  };
+}
+
+async function handleEscalaCriarEvento(request, env, headers) {
+  const body = await request.json();
+  const { tecnicaId, evento, local, data, horarioInicio, horarioFim } = body;
+  if (!tecnicaId || !evento || !data || !horarioInicio || !horarioFim) {
+    return json({ status: 'error', message: 'campos obrigatórios ausentes' }, 400, headers);
+  }
+
+  const { accessToken, erro } = await acessoTecnicaOuErro(env, tecnicaId, headers);
+  if (erro) return erro;
+
+  const resp = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(montarEventBodyEscala({ evento, local, data, horarioInicio, horarioFim }))
+  });
+  if (!resp.ok) {
+    return json({ status: 'error', message: `Falha ao criar evento: ${await resp.text()}` }, 502, headers);
+  }
+  const criado = await resp.json();
+  return json({ status: 'ok', eventId: criado.id, htmlLink: criado.htmlLink }, 200, headers);
+}
+
+async function handleEscalaAtualizarEvento(request, env, headers) {
+  const body = await request.json();
+  const { tecnicaId, eventId, evento, local, data, horarioInicio, horarioFim } = body;
+  if (!tecnicaId || !eventId || !evento || !data || !horarioInicio || !horarioFim) {
+    return json({ status: 'error', message: 'campos obrigatórios ausentes' }, 400, headers);
+  }
+
+  const { accessToken, erro } = await acessoTecnicaOuErro(env, tecnicaId, headers);
+  if (erro) return erro;
+
+  const resp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(montarEventBodyEscala({ evento, local, data, horarioInicio, horarioFim }))
+  });
+  if (!resp.ok) {
+    return json({ status: 'error', message: `Falha ao atualizar evento: ${await resp.text()}` }, 502, headers);
+  }
+  const atualizado = await resp.json();
+  return json({ status: 'ok', eventId: atualizado.id, htmlLink: atualizado.htmlLink }, 200, headers);
+}
+
+async function handleEscalaExcluirEvento(request, env, headers) {
+  const body = await request.json();
+  const { tecnicaId, eventId } = body;
+  if (!tecnicaId || !eventId) {
+    return json({ status: 'error', message: 'campos obrigatórios ausentes' }, 400, headers);
+  }
+
+  const { accessToken, erro } = await acessoTecnicaOuErro(env, tecnicaId, headers);
+  if (erro) return erro;
+
+  const resp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  // 404/410 = já não existe mais — objetivo alcançado, não é erro.
+  if (!resp.ok && resp.status !== 404 && resp.status !== 410) {
+    return json({ status: 'error', message: `Falha ao excluir evento: ${await resp.text()}` }, 502, headers);
+  }
+  return json({ status: 'ok' }, 200, headers);
+}
+
 const DIA_MS = 24 * 60 * 60 * 1000;
 
 function offsetBrasilia(dataHora, campoHora) {
@@ -387,7 +477,10 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva, 
     const evReal = eventos.find((e) => eventoSobrepoe(e, inicioMs, fimMs));
     if (evReal) {
       const janela = janelaDoEvento(evReal);
-      return { summary: evReal.summary || 'Evento sem título', start: evReal.start, end: evReal.end, ...janela };
+      // id do evento real do Google — usado pelo painel de Escala pra filtrar
+      // "conflito consigo mesmo" ao reeditar um item que já tem evento criado
+      // naquela mesma janela de horário.
+      return { id: evReal.id, summary: evReal.summary || 'Evento sem título', start: evReal.start, end: evReal.end, ...janela };
     }
     const aprovada = aprovadasFirestore.find((doc) =>
       janelasDaOpcao(doc.dataEscolhida, doc.tipoReserva || 'unico').some(
@@ -411,7 +504,9 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva, 
     return {
       conflito: Boolean(conflitoEvento),
       folga: Boolean(folgaEvento),
-      eventoConflitante: conflitoEvento || (folgaEvento ? { summary: folgaEvento.summary || 'Evento sem título', start: folgaEvento.start, end: folgaEvento.end } : null)
+      eventoConflitante:
+        conflitoEvento ||
+        (folgaEvento ? { id: folgaEvento.id, summary: folgaEvento.summary || 'Evento sem título', start: folgaEvento.start, end: folgaEvento.end } : null)
     };
   });
 }
@@ -480,6 +575,33 @@ export default {
         return await handleVerificarConflitos(request, env, headers);
       } catch (err) {
         console.error('verificar-conflitos: exceção não tratada:', err.stack || err.message || err);
+        return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
+      }
+    }
+
+    if (url.pathname === '/escala/criar-evento' && request.method === 'POST') {
+      try {
+        return await handleEscalaCriarEvento(request, env, headers);
+      } catch (err) {
+        console.error('escala/criar-evento: exceção não tratada:', err.stack || err.message || err);
+        return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
+      }
+    }
+
+    if (url.pathname === '/escala/atualizar-evento' && request.method === 'POST') {
+      try {
+        return await handleEscalaAtualizarEvento(request, env, headers);
+      } catch (err) {
+        console.error('escala/atualizar-evento: exceção não tratada:', err.stack || err.message || err);
+        return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
+      }
+    }
+
+    if (url.pathname === '/escala/excluir-evento' && request.method === 'POST') {
+      try {
+        return await handleEscalaExcluirEvento(request, env, headers);
+      } catch (err) {
+        console.error('escala/excluir-evento: exceção não tratada:', err.stack || err.message || err);
         return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
       }
     }

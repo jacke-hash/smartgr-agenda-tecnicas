@@ -7,6 +7,7 @@ import { renderFormWorkshop } from './pages/form-workshop.js';
 import { renderPainelJulia } from './pages/painel-julia.js';
 import { renderConectarAgendaTecnica } from './pages/conectar-agenda-tecnica.js';
 import { renderMinhasSolicitacoes } from './pages/minhas-solicitacoes.js';
+import { renderEscalaTecnicas } from './pages/escala-tecnicas.js';
 
 const app = document.getElementById('app');
 
@@ -17,7 +18,8 @@ const ROUTES = {
   '#/workshop': renderFormWorkshop,
   '#/painel': renderPainelJulia,
   '#/conectar-agenda': renderConectarAgendaTecnica,
-  '#/minhas-solicitacoes': renderMinhasSolicitacoes
+  '#/minhas-solicitacoes': renderMinhasSolicitacoes,
+  '#/escala': renderEscalaTecnicas
 };
 
 function navigate(rota) {
@@ -41,6 +43,7 @@ function renderShell(user) {
           <button data-rota="#/">Nova solicitação</button>
           <button data-rota="#/minhas-solicitacoes">Minhas Solicitações</button>
           ${podeVerPainel(user) ? `<button data-rota="#/painel">Painel — Julia</button>` : ''}
+          ${podeVerPainel(user) ? `<button data-rota="#/escala">Escala</button>` : ''}
         </div>
         <div class="user-chip">
           ${user.photoURL ? `<img src="${user.photoURL}" alt="" />` : ''}
@@ -75,7 +78,7 @@ function renderRotaAtual(user) {
 
   const rotaBase = rota.split('?')[0];
 
-  if (rotaBase === '#/painel' && !podeVerPainel(user)) {
+  if ((rotaBase === '#/painel' || rotaBase === '#/escala') && !podeVerPainel(user)) {
     navigate('#/');
     return;
   }
@@ -85,7 +88,7 @@ function renderRotaAtual(user) {
     btn.classList.toggle(
       'active',
       btn.dataset.rota === rota ||
-        (rota.startsWith('#/') && btn.dataset.rota === '#/' && !['#/painel', '#/minhas-solicitacoes'].includes(rota))
+        (rota.startsWith('#/') && btn.dataset.rota === '#/' && !['#/painel', '#/escala', '#/minhas-solicitacoes'].includes(rota))
     );
   });
 

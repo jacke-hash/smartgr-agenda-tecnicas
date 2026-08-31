@@ -174,5 +174,11 @@ service cloud.firestore {
       allow update: if isAprovador();
       allow delete: if false;
     }
+
+    // Escala geral (grade semanal/diária da Julia) — não nasce de solicitação,
+    // não tem vendedor nem técnica "dona"; só quem aprova mexe.
+    match /escalas/{id} {
+      allow read, write: if isAprovador();
+    }
   }
 }
