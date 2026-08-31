@@ -673,12 +673,6 @@ export function renderEscalaTecnicas(container, navigate, user) {
     });
     container.querySelector('#modal-salvar')?.addEventListener('click', salvarItem);
     container.querySelector('#modal-excluir')?.addEventListener('click', excluirItem);
-    container.querySelector('#escala-modal-overlay')?.addEventListener('click', (e) => {
-      if (e.target.id === 'escala-modal-overlay') {
-        modalAberto = null;
-        render();
-      }
-    });
   }
 
   function render() {
