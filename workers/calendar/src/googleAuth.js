@@ -92,7 +92,7 @@ export async function exchangeCodeForTokens(env, code) {
   return resp.json();
 }
 
-export async function refreshAccessToken(env, refreshToken) {
+async function refreshAccessTokenSemCache(env, refreshToken) {
   const resp = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -107,6 +107,40 @@ export async function refreshAccessToken(env, refreshToken) {
     throw new Error(`Falha ao renovar access token: ${resp.status} ${await resp.text()}`);
   }
   return resp.json();
+}
+
+// Uma solicitação típica (verificar-conflitos, depois criar/atualizar-evento
+// pra confirmar) troca o refresh token da MESMA técnica pelo access token
+// mais de uma vez, em requisições HTTP separadas — sem cache, cada uma delas
+// era uma ida inteira ao OAuth do Google, empilhando latência e fazendo o
+// "Salvar" parecer travado. Isolate do Worker fica quente entre requisições,
+// então cachear em módulo (chave = o próprio refresh token, só em memória,
+// nunca persistido) beneficia tanto chamadas paralelas quanto sequenciais.
+// Token de usuário do Google também dura ~1h — mesma margem de segurança do
+// cache da service account.
+const cachePorRefreshToken = new Map();
+
+export async function refreshAccessToken(env, refreshToken) {
+  const agora = Date.now();
+  const cache = cachePorRefreshToken.get(refreshToken);
+  if (cache && agora < cache.expiraEm && !cache.emAndamento) return cache.dados;
+  if (cache?.emAndamento) return cache.emAndamento;
+
+  const promessa = refreshAccessTokenSemCache(env, refreshToken)
+    .then((dados) => {
+      const expiraEmMs = dados.expires_in ? (dados.expires_in - 120) * 1000 : 55 * 60 * 1000;
+      cachePorRefreshToken.set(refreshToken, { dados, expiraEm: Date.now() + expiraEmMs, emAndamento: null });
+      return dados;
+    })
+    .catch((err) => {
+      // Sem isso, uma falha transitória (rede, token revogado) deixaria essa
+      // técnica travada pro resto da vida do isolate — toda chamada futura
+      // reaproveitaria a MESMA promise rejeitada em cache.
+      cachePorRefreshToken.delete(refreshToken);
+      throw err;
+    });
+  cachePorRefreshToken.set(refreshToken, { dados: null, expiraEm: 0, emAndamento: promessa });
+  return promessa;
 }
 
 export async function getGoogleUserInfo(accessToken) {

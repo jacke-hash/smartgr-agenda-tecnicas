@@ -541,32 +541,37 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva, 
   // mostrar pra Julia QUAL evento está conflitando, não só que existe conflito.
   const timeMin = new Date(Math.min(...todosPontos.map((j) => j.inicioMs))).toISOString();
   const timeMax = new Date(Math.max(...todosPontos.map((j) => j.fimMs))).toISOString();
-  const resp = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  if (!resp.ok) {
-    console.error(`verificar-conflitos: events.list falhou pra técnica ${tecnica.id}:`, resp.status, await resp.text());
+
+  // events.list (Calendar real) e a checagem complementar (Firestore) não
+  // dependem uma da outra — rodar em paralelo em vez de sequencial corta uma
+  // ida a mais de rede da latência de cada "Salvar"/checagem.
+  const [respEventos, aprovadasPorColecao] = await Promise.all([
+    fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    ),
+    Promise.all(COLECOES_SOLICITACOES.map((c) => listAprovadasPorTecnica(env, c, tecnica.id))).catch((err) => {
+      // Complementar (não substitui a checagem real do Calendar): solicitações
+      // já aprovadas pra essa técnica no Firestore, cobrindo o gap raro de o
+      // evento no Calendar dela não ter sido criado (ex: falha na hora da
+      // aprovação — aprovar() já avisa isso pra Julia, mas o status fica
+      // 'aprovado' mesmo assim). Se essa parte falhar, segue só com a
+      // checagem real — não é motivo pra bloquear a checagem inteira.
+      console.error(`verificar-conflitos: checagem complementar no Firestore falhou pra técnica ${tecnica.id}:`, err.message);
+      return [];
+    })
+  ]);
+
+  if (!respEventos.ok) {
+    console.error(`verificar-conflitos: events.list falhou pra técnica ${tecnica.id}:`, respEventos.status, await respEventos.text());
     return null;
   }
   // "Local de trabalho: Escritório" é eventType 'workingLocation' — recurso
   // do Google Calendar só pra indicar ONDE ela vai estar naquele dia, não um
   // compromisso de verdade. Marcar "Escritório" a semana inteira não pode
   // bloquear escala nenhuma (TIPOS_EVENTO_IGNORADOS, topo do arquivo).
-  const eventos = ((await resp.json()).items || []).filter((e) => !TIPOS_EVENTO_IGNORADOS.has(e.eventType));
-
-  // Complementar (não substitui a checagem real acima): solicitações já
-  // aprovadas pra essa técnica no Firestore, cobrindo o gap raro de o
-  // evento no Calendar dela não ter sido criado (ex: falha na hora da
-  // aprovação — aprovar() já avisa isso pra Julia, mas o status fica
-  // 'aprovado' mesmo assim).
-  let aprovadasFirestore = [];
-  try {
-    const porColecao = await Promise.all(COLECOES_SOLICITACOES.map((c) => listAprovadasPorTecnica(env, c, tecnica.id)));
-    aprovadasFirestore = porColecao.flat().filter((doc) => doc.id !== solicitacaoIdAtual && doc.dataEscolhida);
-  } catch (err) {
-    console.error(`verificar-conflitos: checagem complementar no Firestore falhou pra técnica ${tecnica.id}:`, err.message);
-  }
+  const eventos = ((await respEventos.json()).items || []).filter((e) => !TIPOS_EVENTO_IGNORADOS.has(e.eventType));
+  const aprovadasFirestore = aprovadasPorColecao.flat().filter((doc) => doc.id !== solicitacaoIdAtual && doc.dataEscolhida);
 
   function eventoConflitanteEm(inicioMs, fimMs) {
     const evReal = eventos.find((e) => eventoSobrepoe(e, inicioMs, fimMs));

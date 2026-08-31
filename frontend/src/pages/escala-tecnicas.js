@@ -461,6 +461,14 @@ export function renderEscalaTecnicas(container, navigate, user) {
     const idsSelecionados = tecnicasSelecionadas.map((email) => tecnicas.find((t) => t.email === email)?.id).filter(Boolean);
     const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
 
+    // A checagem de conflito consulta a Google Agenda de verdade — é a parte
+    // mais lenta do fluxo todo (1-2s por técnica). Sem feedback visual aqui,
+    // a tela parecia travada nesse meio tempo e dava pra clicar Salvar de
+    // novo sem perceber.
+    const btnSalvar = container.querySelector('#modal-salvar');
+    btnSalvar.disabled = true;
+    btnSalvar.textContent = 'Verificando disponibilidade...';
+
     let conflitos = {};
     if (calendarWorkerUrl && idsSelecionados.length > 0) {
       try {
@@ -502,11 +510,11 @@ export function renderEscalaTecnicas(container, navigate, user) {
           return `<div class="error-note">${c.status.folga ? '😴' : '⚠️'} ${c.tecnica}: ${c.status.folga ? 'de folga (trabalhou no domingo anterior)' : 'conflito de agenda'}${detalhe}.</div>`;
         })
         .join('');
+      btnSalvar.disabled = false;
+      btnSalvar.textContent = 'Salvar';
       return;
     }
 
-    const btnSalvar = container.querySelector('#modal-salvar');
-    btnSalvar.disabled = true;
     btnSalvar.textContent = 'Salvando...';
 
     try {

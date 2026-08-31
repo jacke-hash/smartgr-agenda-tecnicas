@@ -34,8 +34,33 @@ function parseServiceAccount(env) {
   return JSON.parse(env.FIREBASE_SERVICE_ACCOUNT_JSON);
 }
 
+// Sem cache, todo GET/PATCH/runQuery no Firestore (getTecnica, patchTecnica,
+// listAprovadasPorTecnica...) assinava um JWT novo e batia no OAuth do
+// Google do zero — inclusive várias vezes DENTRO da mesma requisição (ex:
+// verificar-conflitos chama listAprovadasPorTecnica em paralelo pras 3
+// coleções, cada uma pedindo seu próprio token). Isolate do Worker é
+// reaproveitado entre requisições enquanto ficar "quente", então cachear em
+// módulo também economiza entre chamadas diferentes, não só dentro de uma.
+// Token de service account dura 1h — renova com folga de segurança.
+let tokenServiceAccountCache = null;
+let tokenServiceAccountExpiraEm = 0;
+let tokenServiceAccountEmAndamento = null;
+
 async function getAccessToken(env) {
-  return getServiceAccountAccessToken(parseServiceAccount(env), 'https://www.googleapis.com/auth/datastore');
+  const agora = Date.now();
+  if (tokenServiceAccountCache && agora < tokenServiceAccountExpiraEm) return tokenServiceAccountCache;
+  if (!tokenServiceAccountEmAndamento) {
+    tokenServiceAccountEmAndamento = getServiceAccountAccessToken(parseServiceAccount(env), 'https://www.googleapis.com/auth/datastore')
+      .then((token) => {
+        tokenServiceAccountCache = token;
+        tokenServiceAccountExpiraEm = Date.now() + 55 * 60 * 1000;
+        return token;
+      })
+      .finally(() => {
+        tokenServiceAccountEmAndamento = null;
+      });
+  }
+  return tokenServiceAccountEmAndamento;
 }
 
 function projectBaseUrl(env) {
