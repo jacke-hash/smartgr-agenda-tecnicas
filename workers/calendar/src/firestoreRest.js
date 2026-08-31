@@ -85,6 +85,40 @@ export async function findTecnicaByEmail(env, email) {
   return { id, ...fromFirestoreFields(match.document.fields) };
 }
 
+// Complementar à checagem real no Calendar: solicitações já aprovadas pra
+// essa técnica no Firestore, caso a criação do evento no Calendar dela
+// tenha falhado silenciosamente na hora da aprovação (aprovar() mostra erro
+// nesse caso pra Julia, mas o status já fica 'aprovado' mesmo assim — sem
+// essa checagem, esse gap nunca apareceria em nenhuma consulta ao Calendar).
+export async function listAprovadasPorTecnica(env, colecao, tecnicaId) {
+  const accessToken = await getAccessToken(env);
+  const serviceAccount = parseServiceAccount(env);
+  const resp = await fetch(
+    `https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents:runQuery`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: colecao }],
+          where: {
+            compositeFilter: {
+              op: 'AND',
+              filters: [
+                { fieldFilter: { field: { fieldPath: 'tecnicaAtribuida' }, op: 'EQUAL', value: { stringValue: tecnicaId } } },
+                { fieldFilter: { field: { fieldPath: 'status' }, op: 'EQUAL', value: { stringValue: 'aprovado' } } }
+              ]
+            }
+          }
+        }
+      })
+    }
+  );
+  if (!resp.ok) throw new Error(`Erro ao listar aprovadas de ${colecao} pra técnica ${tecnicaId}: ${resp.status} ${await resp.text()}`);
+  const rows = await resp.json();
+  return rows.filter((r) => r.document).map((r) => ({ id: r.document.name.split('/').pop(), ...fromFirestoreFields(r.document.fields) }));
+}
+
 export async function patchDocumento(env, colecao, id, fields) {
   const accessToken = await getAccessToken(env);
   const updateMask = Object.keys(fields)

@@ -3,7 +3,7 @@
  * e criação automática de evento na agenda individual ao aprovar solicitação.
  */
 import { buildGoogleAuthUrl, exchangeCodeForTokens, refreshAccessToken, getGoogleUserInfo } from './googleAuth.js';
-import { findTecnicaByEmail, getTecnica, patchTecnica } from './firestoreRest.js';
+import { findTecnicaByEmail, getTecnica, patchTecnica, listAprovadasPorTecnica } from './firestoreRest.js';
 import { encryptSecret, decryptSecret, signState, verifyState } from './crypto.js';
 import { corsHeaders, handlePreflight } from './cors.js';
 
@@ -14,6 +14,8 @@ const TIPO_LABEL = {
   revenda: 'Revendas/Redes',
   workshop: 'Workshop'
 };
+
+const COLECOES_SOLICITACOES = ['solicitacoes_consumidor_final', 'solicitacoes_revenda', 'solicitacoes_workshop'];
 
 function json(data, status, headers) {
   return Response.json(data, { status: status || 200, headers });
@@ -303,29 +305,37 @@ function domingosAntesDeSegunda(opcao, tipoReserva) {
     .map(diaAnteriorISO);
 }
 
-// Evento "dia inteiro" (start.date, sem hora) nasce com transparency
-// "transparent" por padrão no Google Calendar — o freeBusy.query IGNORA
-// esses eventos (trata como livre), mesmo que apareçam na agenda. A regra
-// do domingo é "qualquer coisa na agenda", então essa checagem usa
-// events.list (todos os eventos reais, não filtra por transparency) em vez
-// de freeBusy — só ela precisa disso, o conflito por horário normal
-// continua em freeBusy (aí sim faz sentido respeitar "marcada como livre").
-function eventoTocaDia(evento, diaISO) {
+// Janela absoluta (ms) de um evento real do Calendar, dia inteiro (start.date)
+// ou com hora (start.dateTime) — usado tanto pro conflito por horário quanto
+// pela regra do domingo, então só existe um jeito de calcular overlap.
+function janelaDoEvento(evento) {
   if (evento.start?.date) {
-    const fim = evento.end?.date || evento.start.date;
-    return evento.start.date <= diaISO && diaISO < fim;
+    return { inicioMs: meiaNoiteBrasiliaMs(evento.start.date), fimMs: meiaNoiteBrasiliaMs(evento.end?.date || evento.start.date) };
   }
   if (evento.start?.dateTime && evento.end?.dateTime) {
-    const diaInicioMs = meiaNoiteBrasiliaMs(diaISO);
-    const diaFimMs = diaInicioMs + DIA_MS;
-    const evInicioMs = new Date(evento.start.dateTime).getTime();
-    const evFimMs = new Date(evento.end.dateTime).getTime();
-    return evInicioMs < diaFimMs && evFimMs > diaInicioMs;
+    return { inicioMs: new Date(evento.start.dateTime).getTime(), fimMs: new Date(evento.end.dateTime).getTime() };
   }
-  return false;
+  return null;
 }
 
-async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva) {
+function eventoSobrepoe(evento, inicioMs, fimMs) {
+  const janela = janelaDoEvento(evento);
+  return Boolean(janela) && janela.inicioMs < fimMs && janela.fimMs > inicioMs;
+}
+
+function eventoTocaDia(evento, diaISO) {
+  const inicioMs = meiaNoiteBrasiliaMs(diaISO);
+  return eventoSobrepoe(evento, inicioMs, inicioMs + DIA_MS);
+}
+
+// tipoLabel curto só pra identificar o evento "aprovado no sistema" quando o
+// conflito vem do Firestore (gap descrito abaixo), não do Calendar.
+function nomeAprovadaFirestore(doc) {
+  const nome = doc.vendedor || doc.vendedorAcompanha || doc.localInstituicao || doc.nomeRevenda || '—';
+  return `Treinamento já aprovado no sistema — ${nome}`;
+}
+
+async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva, solicitacaoIdAtual) {
   const refreshToken = await decryptSecret(tecnica.refreshTokenEncrypted, env.TOKEN_ENCRYPTION_KEY);
   const { access_token: accessToken } = await refreshAccessToken(env, refreshToken);
 
@@ -333,65 +343,77 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva) 
   const domingosPorOpcao = opcoesData.map((o) => domingosAntesDeSegunda(o, tipoReserva));
   const todasJanelas = janelasPorOpcao.flat();
   const todosDomingos = [...new Set(domingosPorOpcao.flat())];
+  const janelasDomingoMs = todosDomingos.map((d) => ({ inicioMs: meiaNoiteBrasiliaMs(d), fimMs: meiaNoiteBrasiliaMs(d) + DIA_MS }));
+  const todosPontos = [...todasJanelas, ...janelasDomingoMs];
 
-  if (todasJanelas.length === 0 && todosDomingos.length === 0) {
-    return opcoesData.map(() => ({ conflito: false, folga: false }));
+  if (todosPontos.length === 0) {
+    return opcoesData.map(() => ({ conflito: false, folga: false, eventoConflitante: null }));
   }
 
-  // Conflito por horário (comportamento existente): uma chamada freeBusy
-  // cobrindo o intervalo [menor início, maior término] entre todas as
-  // janelas de todas as opções.
-  let ocupadoPorHorario = [];
-  if (todasJanelas.length > 0) {
-    const timeMin = new Date(Math.min(...todasJanelas.map((j) => j.inicioMs))).toISOString();
-    const timeMax = new Date(Math.max(...todasJanelas.map((j) => j.fimMs))).toISOString();
-    const resp = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ timeMin, timeMax, items: [{ id: 'primary' }] })
-    });
-    if (!resp.ok) {
-      console.error(`verificar-conflitos: freeBusy falhou pra técnica ${tecnica.id}:`, resp.status, await resp.text());
-      return null;
+  // events.list (não freeBusy.query) cobrindo o range de tudo que importa
+  // numa chamada só — freeBusy IGNORA eventos marcados transparency
+  // "transparent", que é o padrão de todo evento "dia inteiro" no Google
+  // Calendar. Um "Folga"/feira lançado manualmente como dia inteiro nunca
+  // aparecia como ocupado pro freeBusy, mesmo estando visível na agenda —
+  // bug real reportado (Beauty Fair, Feira CSBD passando batido). events.list
+  // devolve o evento de verdade (com summary/horário), então dá também pra
+  // mostrar pra Julia QUAL evento está conflitando, não só que existe conflito.
+  const timeMin = new Date(Math.min(...todosPontos.map((j) => j.inicioMs))).toISOString();
+  const timeMax = new Date(Math.max(...todosPontos.map((j) => j.fimMs))).toISOString();
+  const resp = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!resp.ok) {
+    console.error(`verificar-conflitos: events.list falhou pra técnica ${tecnica.id}:`, resp.status, await resp.text());
+    return null;
+  }
+  const eventos = (await resp.json()).items || [];
+
+  // Complementar (não substitui a checagem real acima): solicitações já
+  // aprovadas pra essa técnica no Firestore, cobrindo o gap raro de o
+  // evento no Calendar dela não ter sido criado (ex: falha na hora da
+  // aprovação — aprovar() já avisa isso pra Julia, mas o status fica
+  // 'aprovado' mesmo assim).
+  let aprovadasFirestore = [];
+  try {
+    const porColecao = await Promise.all(COLECOES_SOLICITACOES.map((c) => listAprovadasPorTecnica(env, c, tecnica.id)));
+    aprovadasFirestore = porColecao.flat().filter((doc) => doc.id !== solicitacaoIdAtual && doc.dataEscolhida);
+  } catch (err) {
+    console.error(`verificar-conflitos: checagem complementar no Firestore falhou pra técnica ${tecnica.id}:`, err.message);
+  }
+
+  function eventoConflitanteEm(inicioMs, fimMs) {
+    const evReal = eventos.find((e) => eventoSobrepoe(e, inicioMs, fimMs));
+    if (evReal) {
+      const janela = janelaDoEvento(evReal);
+      return { summary: evReal.summary || 'Evento sem título', start: evReal.start, end: evReal.end, ...janela };
     }
-    ocupadoPorHorario = (await resp.json()).calendars?.primary?.busy || [];
-  }
-
-  // Eventos reais (qualquer transparency) só pros domingos que importam.
-  let eventosDomingo = [];
-  if (todosDomingos.length > 0) {
-    const inicioMs = Math.min(...todosDomingos.map(meiaNoiteBrasiliaMs));
-    const fimMs = Math.max(...todosDomingos.map((d) => meiaNoiteBrasiliaMs(d) + DIA_MS));
-    const resp = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(new Date(inicioMs).toISOString())}&timeMax=${encodeURIComponent(new Date(fimMs).toISOString())}&singleEvents=true`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+    const aprovada = aprovadasFirestore.find((doc) =>
+      janelasDaOpcao(doc.dataEscolhida, doc.tipoReserva || 'unico').some(
+        (j) => j.inicioMs < fimMs && j.fimMs > inicioMs
+      )
     );
-    if (!resp.ok) {
-      console.error(`verificar-conflitos: events.list (domingo) falhou pra técnica ${tecnica.id}:`, resp.status, await resp.text());
-      return null;
-    }
-    eventosDomingo = (await resp.json()).items || [];
+    if (aprovada) return { summary: nomeAprovadaFirestore(aprovada), start: null, end: null };
+    return null;
   }
-
-  const temOverlapHorario = (janelas) =>
-    janelas.some((j) =>
-      ocupadoPorHorario.some((b) => {
-        const bInicio = new Date(b.start).getTime();
-        const bFim = new Date(b.end).getTime();
-        return j.inicioMs < bFim && j.fimMs > bInicio;
-      })
-    );
-
-  const domingoOcupado = (diaISO) => eventosDomingo.some((e) => eventoTocaDia(e, diaISO));
 
   // Dois motivos distintos, não misturar: "conflito" é ela já ter algo
   // marcado por HORÁRIO exatamente ali; "folga" é a regra de descanso
   // (trabalhou domingo, indisponível a segunda inteira) — o painel mostra
   // cada um com aviso diferente pra não confundir Julia.
-  return opcoesData.map((_, idx) => ({
-    conflito: temOverlapHorario(janelasPorOpcao[idx]),
-    folga: domingosPorOpcao[idx].some(domingoOcupado)
-  }));
+  return opcoesData.map((_, idx) => {
+    const conflitoEvento = janelasPorOpcao[idx].reduce((achado, j) => achado || eventoConflitanteEm(j.inicioMs, j.fimMs), null);
+    const folgaEvento = domingosPorOpcao[idx].reduce(
+      (achado, dia) => achado || eventos.find((e) => eventoTocaDia(e, dia)),
+      null
+    );
+    return {
+      conflito: Boolean(conflitoEvento),
+      folga: Boolean(folgaEvento),
+      eventoConflitante: conflitoEvento || (folgaEvento ? { summary: folgaEvento.summary || 'Evento sem título', start: folgaEvento.start, end: folgaEvento.end } : null)
+    };
+  });
 }
 
 async function handleVerificarConflitos(request, env, headers) {
@@ -402,7 +424,7 @@ async function handleVerificarConflitos(request, env, headers) {
     return json({ status: 'error', message: 'body inválido' }, 400, headers);
   }
 
-  const { tecnicaIds, opcoesData, tipoReserva } = body;
+  const { tecnicaIds, opcoesData, tipoReserva, solicitacaoId } = body;
   if (!Array.isArray(tecnicaIds) || !Array.isArray(opcoesData) || opcoesData.length === 0) {
     return json({ status: 'error', message: 'tecnicaIds e opcoesData são obrigatórios' }, 400, headers);
   }
@@ -412,7 +434,7 @@ async function handleVerificarConflitos(request, env, headers) {
       try {
         const tecnica = await getTecnica(env, tecnicaId);
         if (!tecnica || !tecnica.refreshTokenEncrypted) return [tecnicaId, null];
-        return [tecnicaId, await verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva || 'unico')];
+        return [tecnicaId, await verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva || 'unico', solicitacaoId || null)];
       } catch (err) {
         console.error(`verificar-conflitos: falha pra técnica ${tecnicaId}:`, err.message);
         return [tecnicaId, null];

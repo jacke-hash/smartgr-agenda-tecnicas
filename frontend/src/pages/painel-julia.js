@@ -156,13 +156,32 @@ export function renderPainelJulia(container) {
   // misturar na mesma mensagem: "conflito" é a técnica já ter algo marcado
   // naquele horário; "folga" é a regra de descanso (trabalhou domingo,
   // segunda inteira indisponível). estado.conflitos[tecnicaId][idx] vem do
-  // worker como { conflito, folga }.
+  // worker como { conflito, folga, eventoConflitante }.
   function tecnicasComConflitoEm(estado, idx) {
-    return tecnicas.filter((t) => estado.conflitos?.[t.id]?.[idx]?.conflito).map((t) => t.nome);
+    return tecnicas
+      .filter((t) => estado.conflitos?.[t.id]?.[idx]?.conflito)
+      .map((t) => ({ nome: t.nome, evento: estado.conflitos[t.id][idx].eventoConflitante }));
   }
 
   function tecnicasComFolgaEm(estado, idx) {
-    return tecnicas.filter((t) => estado.conflitos?.[t.id]?.[idx]?.folga).map((t) => t.nome);
+    return tecnicas
+      .filter((t) => estado.conflitos?.[t.id]?.[idx]?.folga)
+      .map((t) => ({ nome: t.nome, evento: estado.conflitos[t.id][idx].eventoConflitante }));
+  }
+
+  // "BEAUTY FAIR" (dia inteiro) ou "Reunião" (09:00–10:30) — o nome+horário
+  // do evento real encontrado no Calendar (ou o registro do Firestore, na
+  // checagem complementar), pra Julia entender o que está batendo sem
+  // precisar abrir a agenda da técnica.
+  function formatarEventoConflitante(evento) {
+    if (!evento?.summary) return '';
+    if (evento.start?.date) return `"${evento.summary}" (dia inteiro)`;
+    if (evento.start?.dateTime && evento.end?.dateTime) {
+      const ini = new Date(evento.start.dateTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const fim = new Date(evento.end.dateTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      return `"${evento.summary}" (${ini}–${fim})`;
+    }
+    return `"${evento.summary}"`;
   }
 
   function tecnicaIndisponivelEm(estado, tecnicaId, idx) {
@@ -195,8 +214,16 @@ export function renderPainelJulia(container) {
             <div class="d">${linhaData}</div>
             <div class="t">${opt.horaInicio} - ${opt.horaTermino}</div>
             <div class="check">✓ escolhida</div>
-            ${conflitantes.length ? `<div class="conflict-warn">⚠️ ${conflitantes.join(', ')}</div>` : ''}
-            ${emFolga.length ? `<div class="folga-warn">😴 Indisponível (folga): ${emFolga.join(', ')}</div>` : ''}
+            ${
+              conflitantes.length
+                ? `<div class="conflict-warn">⚠️ ${conflitantes.map((c) => `${c.nome}${c.evento ? ` — bate com ${formatarEventoConflitante(c.evento)}` : ''}`).join('; ')}</div>`
+                : ''
+            }
+            ${
+              emFolga.length
+                ? `<div class="folga-warn">😴 Indisponível (folga): ${emFolga.map((c) => `${c.nome}${c.evento ? ` (${formatarEventoConflitante(c.evento)})` : ''}`).join('; ')}</div>`
+                : ''
+            }
           </div>
         `;
           })
@@ -231,7 +258,8 @@ export function renderPainelJulia(container) {
         body: JSON.stringify({
           tecnicaIds: tecnicasConectadas.map((t) => t.id),
           tipoReserva: item.tipoReserva || 'unico',
-          opcoesData: item.opcoesData
+          opcoesData: item.opcoesData,
+          solicitacaoId: item._id
         })
       });
       const resultado = await resp.json();
@@ -299,7 +327,11 @@ export function renderPainelJulia(container) {
             aindaVerificando
               ? `<div class="checking-note">🔄 Verificando disponibilidade das técnicas na agenda...</div>`
               : combinacaoIndisponivel
-                ? `<div class="error-note">${statusEscolhida.folga ? '😴 Técnica selecionada está de folga (trabalhou no domingo anterior). Escolha outra técnica ou data.' : '⚠️ Técnica selecionada tem conflito de agenda nesse horário. Escolha outra técnica ou data.'}</div>`
+                ? `<div class="error-note">${
+                  statusEscolhida.folga
+                    ? `😴 Técnica selecionada está de folga (trabalhou no domingo anterior)${statusEscolhida.eventoConflitante ? ` — ${formatarEventoConflitante(statusEscolhida.eventoConflitante)}` : ''}. Escolha outra técnica ou data.`
+                    : `⚠️ Técnica selecionada tem conflito de agenda nesse horário${statusEscolhida.eventoConflitante ? ` — bate com ${formatarEventoConflitante(statusEscolhida.eventoConflitante)}` : ''}. Escolha outra técnica ou data.`
+                }</div>`
                 : ''
           }
           <div class="action-row">
@@ -383,8 +415,9 @@ export function renderPainelJulia(container) {
 
     const idxRelevante = estado.dataEscolhidaIdx;
     if (tecnicaIndisponivelEm(estado, estado.tecnicaId, idxRelevante)) {
-      const folga = estado.conflitos?.[estado.tecnicaId]?.[idxRelevante]?.folga;
-      msgEl.innerHTML = `<div class="error-note">${folga ? '😴 Técnica selecionada está de folga (trabalhou no domingo anterior). Escolha outra técnica ou data.' : '⚠️ Técnica selecionada tem conflito de agenda nesse horário. Escolha outra técnica ou data.'}</div>`;
+      const status = estado.conflitos?.[estado.tecnicaId]?.[idxRelevante];
+      const detalhe = status?.eventoConflitante ? ` — ${formatarEventoConflitante(status.eventoConflitante)}` : '';
+      msgEl.innerHTML = `<div class="error-note">${status?.folga ? `😴 Técnica selecionada está de folga (trabalhou no domingo anterior)${detalhe}. Escolha outra técnica ou data.` : `⚠️ Técnica selecionada tem conflito de agenda nesse horário${detalhe}. Escolha outra técnica ou data.`}</div>`;
       return;
     }
 
