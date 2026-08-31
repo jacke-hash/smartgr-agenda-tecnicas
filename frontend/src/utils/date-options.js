@@ -95,6 +95,16 @@ export function formatarDataBR(dataISO) {
   return `${dia}-${mes}-${ano}`;
 }
 
+// Formata a data ESCOLHIDA (pós-aprovação) de uma solicitação, único ou
+// período — reaproveitado no painel da Julia e no painel "Minhas
+// Solicitações". Retorna null se ainda não tem dataEscolhida (pendente).
+export function formatarDataEscolhida(item) {
+  if (!item.dataEscolhida) return null;
+  return item.tipoReserva === 'periodo'
+    ? `${formatarDataBR(item.dataEscolhida.dataInicio)} a ${formatarDataBR(item.dataEscolhida.dataFim)}`
+    : formatarDataBR(item.dataEscolhida.data);
+}
+
 export function destacarOpcoesInvalidas(container, indicesInvalidos) {
   container.querySelectorAll('.date-option').forEach((el) => {
     const idx = Number(el.dataset.idx);

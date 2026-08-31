@@ -11,21 +11,10 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
 import { notificarAprovacao, notificarRecusa } from '../utils/notificar.js';
-import { formatarDataBR } from '../utils/date-options.js';
+import { formatarDataBR, formatarDataEscolhida } from '../utils/date-options.js';
+import { TAG_TIPO, formatDataHora } from '../utils/tipo-labels.js';
 
 const COLECOES = ['solicitacoes_consumidor_final', 'solicitacoes_revenda', 'solicitacoes_workshop'];
-
-const TAG_TIPO = {
-  consumidor_final: { label: 'Consumidor Final', cls: 'consumidor_final' },
-  revenda: { label: 'Revendas/Redes', cls: 'revenda' },
-  workshop: { label: 'Workshop', cls: 'workshop' }
-};
-
-function formatDataHora(ts) {
-  if (!ts) return '—';
-  const d = ts.toDate ? ts.toDate() : new Date(ts);
-  return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
 
 function formatCountdown(slaExpiraEm) {
   if (!slaExpiraEm) return { texto: 'sem SLA', classe: '' };
@@ -327,12 +316,7 @@ export function renderPainelJulia(container) {
     const tipoLabel = TAG_TIPO[item.tipo]?.label || item.tipo;
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
     const tecnica = tecnicas.find((t) => t.id === item.tecnicaAtribuida);
-    const dataHora =
-      item.tipoReserva === 'periodo'
-        ? item.dataEscolhida
-          ? `${formatarDataBR(item.dataEscolhida.dataInicio)} a ${formatarDataBR(item.dataEscolhida.dataFim)}`
-          : null
-        : formatarDataBR(item.dataEscolhida?.data);
+    const dataHora = formatarDataEscolhida(item);
     const statusLabel = item.status === 'aprovado' ? 'Aprovada' : 'Recusada';
 
     return `
@@ -405,10 +389,15 @@ export function renderPainelJulia(container) {
     }
 
     const dataHora = item.opcoesData[estado.dataEscolhidaIdx];
+    // Denormalizado igual vendedorEmail — sem isso o painel "Minhas
+    // Solicitações" da técnica não tem como filtrar por e-mail (tecnicaAtribuida
+    // só guarda o ID do doc dela).
+    const tecnicaEmail = tecnicas.find((t) => t.id === estado.tecnicaId)?.email || null;
 
     const payload = {
       status: 'aprovado',
       tecnicaAtribuida: estado.tecnicaId,
+      tecnicaEmail,
       dataEscolhida: dataHora,
       aprovadoEm: serverTimestamp()
     };

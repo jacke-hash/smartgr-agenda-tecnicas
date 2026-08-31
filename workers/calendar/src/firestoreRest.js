@@ -85,7 +85,7 @@ export async function findTecnicaByEmail(env, email) {
   return { id, ...fromFirestoreFields(match.document.fields) };
 }
 
-export async function patchTecnica(env, id, fields) {
+export async function patchDocumento(env, colecao, id, fields) {
   const accessToken = await getAccessToken(env);
   const updateMask = Object.keys(fields)
     .map((k) => `updateMask.fieldPaths=${encodeURIComponent(k)}`)
@@ -94,10 +94,14 @@ export async function patchTecnica(env, id, fields) {
   for (const [k, v] of Object.entries(fields)) {
     firestoreFields[k] = toFirestoreValue(v);
   }
-  const resp = await fetch(`${projectBaseUrl(env)}/tecnicas/${id}?${updateMask}`, {
+  const resp = await fetch(`${projectBaseUrl(env)}/${colecao}/${id}?${updateMask}`, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields: firestoreFields })
   });
-  if (!resp.ok) throw new Error(`Erro ao atualizar técnica: ${resp.status} ${await resp.text()}`);
+  if (!resp.ok) throw new Error(`Erro ao atualizar ${colecao}/${id}: ${resp.status} ${await resp.text()}`);
+}
+
+export async function patchTecnica(env, id, fields) {
+  return patchDocumento(env, 'tecnicas', id, fields);
 }

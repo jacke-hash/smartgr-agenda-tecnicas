@@ -428,6 +428,29 @@ input.invalid,select.invalid{border-color:var(--danger);}
 .empty-state{text-align:center;padding:60px 20px;color:var(--text-soft);}
 .loading-state{text-align:center;padding:60px 20px;color:var(--text-soft);}
 
+/* Minhas Solicitações — listas de acompanhamento (vendedor/técnica) */
+.filtro-status{
+  font-family:inherit;font-size:13px;padding:8px 10px;
+  border:1px solid var(--border);border-radius:var(--radius-sm);
+  background:#fff;color:var(--text);outline:none;margin-left:auto;
+}
+.section-title:has(.filtro-status){justify-content:space-between;}
+.tracking-list{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;}
+.tracking-row{
+  display:grid;grid-template-columns:1.2fr 1.5fr 1fr 1fr 1.3fr;gap:12px;
+  align-items:center;padding:10px 14px;font-size:13px;
+  border-bottom:1px solid var(--border);
+}
+.tracking-row:last-child{border-bottom:none;}
+.tracking-header{
+  background:var(--bg-soft,#F5F7FA);font-size:11px;font-weight:700;
+  color:var(--text-soft);text-transform:uppercase;letter-spacing:.4px;
+}
+@media (max-width:720px){
+  .tracking-row{grid-template-columns:1fr 1fr;row-gap:6px;}
+  .tracking-header{display:none;}
+}
+
 .login-wrap{
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   min-height:100vh;text-align:center;gap:16px;

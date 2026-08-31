@@ -6,6 +6,7 @@ import { renderFormRevenda } from './pages/form-revenda.js';
 import { renderFormWorkshop } from './pages/form-workshop.js';
 import { renderPainelJulia } from './pages/painel-julia.js';
 import { renderConectarAgendaTecnica } from './pages/conectar-agenda-tecnica.js';
+import { renderMinhasSolicitacoes } from './pages/minhas-solicitacoes.js';
 
 const app = document.getElementById('app');
 
@@ -15,7 +16,8 @@ const ROUTES = {
   '#/consumidor-final': renderFormConsumidorFinal,
   '#/workshop': renderFormWorkshop,
   '#/painel': renderPainelJulia,
-  '#/conectar-agenda': renderConectarAgendaTecnica
+  '#/conectar-agenda': renderConectarAgendaTecnica,
+  '#/minhas-solicitacoes': renderMinhasSolicitacoes
 };
 
 function navigate(rota) {
@@ -37,6 +39,7 @@ function renderShell(user) {
       <div class="topbar-right">
         <div class="view-switch">
           <button data-rota="#/">Nova solicitação</button>
+          <button data-rota="#/minhas-solicitacoes">Minhas Solicitações</button>
           ${podeVerPainel(user) ? `<button data-rota="#/painel">Painel — Julia</button>` : ''}
         </div>
         <div class="user-chip">
@@ -79,7 +82,11 @@ function renderRotaAtual(user) {
 
   const switchButtons = app.querySelectorAll('.view-switch button');
   switchButtons.forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.rota === rota || (rota.startsWith('#/') && btn.dataset.rota === '#/' && !['#/painel'].includes(rota)));
+    btn.classList.toggle(
+      'active',
+      btn.dataset.rota === rota ||
+        (rota.startsWith('#/') && btn.dataset.rota === '#/' && !['#/painel', '#/minhas-solicitacoes'].includes(rota))
+    );
   });
 
   const renderer = ROUTES[rotaBase] || renderLanding;
