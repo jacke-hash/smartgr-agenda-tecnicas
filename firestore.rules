@@ -54,12 +54,30 @@ service cloud.firestore {
       return !opcaoUnicoPreenchida(opcao) || diasAntecedenciaOk(opcao.data, diasMinimos);
     }
 
+    // Duas opções preenchidas com o mesmo data+horário não são duas
+    // alternativas de verdade — espelha frontend/src/utils/date-options.js
+    // (opcoesUnicoDuplicadas). Só compara opções já preenchidas.
+    function opcaoUnicoIgual(a, b) {
+      return opcaoUnicoPreenchida(a) && opcaoUnicoPreenchida(b)
+        && a.data == b.data && a.horaInicio == b.horaInicio && a.horaTermino == b.horaTermino;
+    }
+
+    function opcoesUnicoSemDuplicata(opcoes) {
+      return !opcaoUnicoIgual(opcoes[0], opcoes[1])
+        && !opcaoUnicoIgual(opcoes[0], opcoes[2])
+        && !opcaoUnicoIgual(opcoes[0], opcoes[3])
+        && !opcaoUnicoIgual(opcoes[1], opcoes[2])
+        && !opcaoUnicoIgual(opcoes[1], opcoes[3])
+        && !opcaoUnicoIgual(opcoes[2], opcoes[3]);
+    }
+
     function todasOpcoesUnicoOk(opcoes, diasMinimos) {
       return opcoes is list && opcoes.size() == 4
         && opcaoUnicoOk(opcoes[0], diasMinimos)
         && opcaoUnicoOk(opcoes[1], diasMinimos)
         && opcaoUnicoOk(opcoes[2], diasMinimos)
         && opcaoUnicoOk(opcoes[3], diasMinimos)
+        && opcoesUnicoSemDuplicata(opcoes)
         && (
           (opcaoUnicoPreenchida(opcoes[0]) ? 1 : 0) +
           (opcaoUnicoPreenchida(opcoes[1]) ? 1 : 0) +
@@ -82,10 +100,18 @@ service cloud.firestore {
         || (opcao.dataFim >= opcao.dataInicio && diasAntecedenciaOk(opcao.dataInicio, diasMinimos));
     }
 
+    // Mesma ideia de opcaoUnicoIgual, pro shape de período.
+    function opcaoPeriodoIgual(a, b) {
+      return opcaoPeriodoPreenchida(a) && opcaoPeriodoPreenchida(b)
+        && a.dataInicio == b.dataInicio && a.dataFim == b.dataFim
+        && a.horaInicio == b.horaInicio && a.horaTermino == b.horaTermino;
+    }
+
     function todasOpcoesPeriodoOk(opcoes, diasMinimos) {
       return opcoes is list && opcoes.size() == 2
         && opcaoPeriodoOk(opcoes[0], diasMinimos)
         && opcaoPeriodoOk(opcoes[1], diasMinimos)
+        && !opcaoPeriodoIgual(opcoes[0], opcoes[1])
         && (
           (opcaoPeriodoPreenchida(opcoes[0]) ? 1 : 0) +
           (opcaoPeriodoPreenchida(opcoes[1]) ? 1 : 0)

@@ -85,6 +85,30 @@ export function opcoesForaDoPrazo(opcoes, diasMinimos = 7) {
   }, []);
 }
 
+// Duas opções com a MESMA data+horário não são duas alternativas de
+// verdade — oferecer a mesma janela duas vezes não ajuda a Julia a montar a
+// agenda. Só compara opções já preenchidas (uma em branco nunca é
+// "duplicata" de outra). Retorna os índices de TODAS as opções envolvidas em
+// algum par repetido (pra destacar as duas, não só a segunda).
+export function opcoesUnicoDuplicadas(opcoes) {
+  const idxs = new Set();
+  for (let i = 0; i < opcoes.length; i++) {
+    if (!opcaoUnicoPreenchida(opcoes[i])) continue;
+    for (let j = i + 1; j < opcoes.length; j++) {
+      if (!opcaoUnicoPreenchida(opcoes[j])) continue;
+      if (
+        opcoes[i].data === opcoes[j].data &&
+        opcoes[i].horaInicio === opcoes[j].horaInicio &&
+        opcoes[i].horaTermino === opcoes[j].horaTermino
+      ) {
+        idxs.add(i);
+        idxs.add(j);
+      }
+    }
+  }
+  return [...idxs];
+}
+
 // Só pra exibição — o valor armazenado (Firestore, comparações, validações)
 // continua sempre em ISO (YYYY-MM-DD). Não usar o retorno daqui pra nada além
 // de mostrar na tela.
@@ -197,6 +221,29 @@ export function opcoesPeriodoComOrdemInvalida(opcoes) {
     if (opcaoPeriodoPreenchida(o) && o.dataFim < o.dataInicio) idxs.push(idx);
     return idxs;
   }, []);
+}
+
+// Mesma lógica de opcoesUnicoDuplicadas, pro shape de período (dataInicio +
+// dataFim + horários) — duas opções de período idênticas não são duas
+// alternativas de verdade.
+export function opcoesPeriodoDuplicadas(opcoes) {
+  const idxs = new Set();
+  for (let i = 0; i < opcoes.length; i++) {
+    if (!opcaoPeriodoPreenchida(opcoes[i])) continue;
+    for (let j = i + 1; j < opcoes.length; j++) {
+      if (!opcaoPeriodoPreenchida(opcoes[j])) continue;
+      if (
+        opcoes[i].dataInicio === opcoes[j].dataInicio &&
+        opcoes[i].dataFim === opcoes[j].dataFim &&
+        opcoes[i].horaInicio === opcoes[j].horaInicio &&
+        opcoes[i].horaTermino === opcoes[j].horaTermino
+      ) {
+        idxs.add(i);
+        idxs.add(j);
+      }
+    }
+  }
+  return [...idxs];
 }
 
 // Só a data início de opções realmente completas entra na checagem — a data

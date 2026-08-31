@@ -6,13 +6,15 @@ import {
   coletarDateOptions,
   dateOptionsValidas,
   opcoesForaDoPrazo,
+  opcoesUnicoDuplicadas,
   destacarOpcoesInvalidas,
   renderPeriodoOptionsHTML,
   ativarSincroniaPeriodo,
   coletarPeriodoOptions,
   periodoOptionsValidas,
   opcoesPeriodoForaDoPrazo,
-  opcoesPeriodoComOrdemInvalida
+  opcoesPeriodoComOrdemInvalida,
+  opcoesPeriodoDuplicadas
 } from '../utils/date-options.js';
 import { renderEnderecoHTML, coletarEndereco } from '../utils/endereco.js';
 import { notificarNovaSolicitacao } from '../utils/notificar.js';
@@ -298,6 +300,18 @@ export function renderFormConsumidorFinal(container, navigate, user) {
     renderizarBlocoDatas();
   });
 
+  // Feedback assim que o vendedor repete uma data/horário — não precisa
+  // esperar o submit pra descobrir. dateOptionsEl não é substituído quando
+  // tipoReserva muda (só o innerHTML dele), então o listener delegado
+  // continua valendo pros campos novos.
+  dateOptionsEl.addEventListener('input', () => {
+    const opcoesData = tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : coletarDateOptions(dateOptionsEl);
+    const duplicadas = tipoReserva === 'periodo' ? opcoesPeriodoDuplicadas(opcoesData) : opcoesUnicoDuplicadas(opcoesData);
+    destacarOpcoesInvalidas(dateOptionsEl, duplicadas);
+    errorBox.innerHTML =
+      duplicadas.length > 0 ? `<div class="error-note">As datas e horários das opções precisam ser diferentes entre si.</div>` : '';
+  });
+
   container.querySelector('#form-final').addEventListener('submit', async (e) => {
     e.preventDefault();
     errorBox.innerHTML = '';
@@ -311,6 +325,13 @@ export function renderFormConsumidorFinal(container, navigate, user) {
         errorBox.innerHTML = `<div class="error-note">A data término não pode ser antes da data início. Corrija a(s) opção(ões) destacada(s).</div>`;
         return;
       }
+    }
+
+    const duplicadas = tipoReserva === 'periodo' ? opcoesPeriodoDuplicadas(opcoesData) : opcoesUnicoDuplicadas(opcoesData);
+    if (duplicadas.length > 0) {
+      destacarOpcoesInvalidas(dateOptionsEl, duplicadas);
+      errorBox.innerHTML = `<div class="error-note">As datas e horários das opções precisam ser diferentes entre si.</div>`;
+      return;
     }
 
     const opcoesValidas = tipoReserva === 'periodo' ? periodoOptionsValidas(opcoesData) : dateOptionsValidas(opcoesData);
