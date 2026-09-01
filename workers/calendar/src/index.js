@@ -66,11 +66,24 @@ function formatarDescricaoSolicitacao(tipo, s) {
     ];
   }
 
+  if (tipo === 'revenda' && s.destinoTreinamento === 'cliente_revenda') {
+    return [
+      s.nomeRevenda ? `Revenda/Rede: ${s.nomeRevenda}` : null,
+      `Destino: Cliente da revenda`,
+      s.tipoTreinamentoCliente ? `Tipo de treinamento: ${s.tipoTreinamentoCliente === 'online' ? 'Online' : 'Presencial'}` : null,
+      s.nomeTreinamentoCliente ? `Treinamento: ${s.nomeTreinamentoCliente}` : null,
+      s.equipamentoCliente ? `Equipamento: ${s.equipamentoCliente}` : null,
+      s.insumosCliente ? `Insumos: ${s.insumosCliente}` : null,
+      s.transporteCliente ? `Transporte: ${s.transporteCliente}` : null,
+      s.observacoesCliente ? `Observações: ${s.observacoesCliente}` : null
+    ];
+  }
+
   if (tipo === 'revenda') {
     return [
       s.nomeRevenda ? `Revenda/Rede: ${s.nomeRevenda}` : null,
       s.tema ? `Tema: ${s.tema}` : null,
-      s.destinoTreinamento ? `Destino: ${s.destinoTreinamento === 'propria_revenda' ? 'Equipe própria' : 'Cliente da revenda'}` : null
+      `Destino: Equipe própria`
     ];
   }
 

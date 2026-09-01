@@ -16,7 +16,7 @@ import {
   opcoesPeriodoComOrdemInvalida,
   opcoesPeriodoDuplicadas
 } from '../utils/date-options.js';
-import { renderEnderecoHTML, coletarEndereco } from '../utils/endereco.js';
+import { renderEnderecoHTML, coletarEndereco, ativarAutoPreenchimentoCep } from '../utils/endereco.js';
 import { notificarNovaSolicitacao } from '../utils/notificar.js';
 
 const UNIDADES = ['Zona Sul', 'Zona Leste', 'Rio Claro', 'Recife', 'Porto Alegre'];
@@ -229,6 +229,7 @@ export function renderFormConsumidorFinal(container, navigate, user) {
   // voltar a ser `required` quando o bloco reaparece; o complemento (opcional)
   // nunca entra aqui.
   const camposObrigatoriosExterno = Array.from(blocoExterno.querySelectorAll('[required]'));
+  ativarAutoPreenchimentoCep(container, 'final');
 
   function aplicarTrava() {
     grupoModalidade.querySelectorAll('.pill').forEach((p) => {

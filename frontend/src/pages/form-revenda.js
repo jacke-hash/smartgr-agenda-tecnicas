@@ -16,7 +16,7 @@ import {
   opcoesPeriodoComOrdemInvalida,
   opcoesPeriodoDuplicadas
 } from '../utils/date-options.js';
-import { renderEnderecoHTML, coletarEndereco } from '../utils/endereco.js';
+import { renderEnderecoHTML, coletarEndereco, ativarAutoPreenchimentoCep } from '../utils/endereco.js';
 import { notificarNovaSolicitacao } from '../utils/notificar.js';
 
 function criarPillGroup(container, id, valorInicial, aoMudar) {
@@ -68,6 +68,7 @@ export function renderFormRevenda(container, navigate, user) {
           </div>
         </div>
 
+        <div id="campos-propria">
         <div class="section">
           <div class="section-title"><h3>Perfil da revenda</h3><span>pode variar a cada solicitação</span></div>
           <div class="field-row">
@@ -190,6 +191,23 @@ export function renderFormRevenda(container, navigate, user) {
             </div>
           </div>
         </div>
+        </div>
+
+        <div id="campos-cliente" style="display:none;">
+          <div class="section">
+            <div class="section-title"><h3>Tipo de treinamento</h3><span>este fluxo é sempre sobre equipamentos</span></div>
+            <div class="field-row single">
+              <div class="field">
+                <label>Este treinamento será Online ou Presencial?</label>
+                <div class="pill-group" id="grupo-tipo-treinamento-cliente">
+                  <div class="pill" data-val="online">Online</div>
+                  <div class="pill" data-val="presencial">Presencial</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="campos-cliente-detalhe"></div>
+        </div>
 
         <div class="section">
           <div class="section-title"><h3>Duração da reserva</h3></div>
@@ -243,7 +261,6 @@ export function renderFormRevenda(container, navigate, user) {
 
   container.querySelector('#btn-voltar').addEventListener('click', () => navigate('#/'));
 
-  const destino = criarPillGroup(container, 'grupo-destino', 'propria_revenda', () => {});
   const linhaCompleta = criarPillGroup(container, 'grupo-linha-completa', 'sim', () => {});
   const tecnicaPropria = criarPillGroup(container, 'grupo-tecnica-propria', 'sim', () => {});
   const espacoPratica = criarPillGroup(container, 'grupo-espaco-pratica', 'sim', () => {});
@@ -259,6 +276,7 @@ export function renderFormRevenda(container, navigate, user) {
   // Snapshot antes de qualquer toggle — só esses campos devem voltar a ser
   // `required` quando o bloco reaparece (complemento é opcional, fica de fora).
   const camposObrigatoriosEndereco = Array.from(blocoEndereco.querySelectorAll('[required]'));
+  ativarAutoPreenchimentoCep(container, 'revenda');
   const modalidade = criarPillGroup(container, 'grupo-modalidade', 'presencial', (valor) => {
     blocoEndereco.style.display = valor === 'presencial' ? 'block' : 'none';
     // Campo required escondido trava o submit nativo em silêncio (Chrome não
@@ -272,6 +290,114 @@ export function renderFormRevenda(container, navigate, user) {
   const blocoTransporteDetalhe = container.querySelector('#bloco-transporte-detalhe');
   const transporte = criarPillGroup(container, 'grupo-transporte', 'sim', (valor) => {
     blocoTransporteDetalhe.style.display = valor === 'sim' ? 'block' : 'none';
+  });
+
+  // --- Fluxo "Cliente da revenda" — sempre sobre equipamentos, com switch
+  // Online/Presencial decidindo os campos seguintes. Reconstrói o bloco do
+  // zero a cada escolha/troca — evita dado fantasma (endereço/transporte
+  // preenchido e esquecido se voltar pra Online, ou pra "equipe própria").
+  const camposPropria = container.querySelector('#campos-propria');
+  const camposCliente = container.querySelector('#campos-cliente');
+  const camposClienteDetalhe = container.querySelector('#campos-cliente-detalhe');
+  const grupoTipoTreinamentoCliente = container.querySelector('#grupo-tipo-treinamento-cliente');
+  // Endereço (fluxo próprio) já segue a regra dele mesmo (modalidade) — os
+  // demais campos obrigatórios do bloco só valem quando ele está visível.
+  const camposObrigatoriosPropriaExtras = Array.from(camposPropria.querySelectorAll('[required]')).filter(
+    (el) => !camposObrigatoriosEndereco.includes(el)
+  );
+
+  let tipoTreinamentoCliente = null;
+
+  function renderCamposClienteDetalhe() {
+    if (!tipoTreinamentoCliente) {
+      camposClienteDetalhe.innerHTML = '';
+      return;
+    }
+    const presencial = tipoTreinamentoCliente === 'presencial';
+    camposClienteDetalhe.innerHTML = `
+      <div class="section">
+        <div class="section-title"><h3>Dados do treinamento</h3></div>
+        <div class="field-row single">
+          <div class="field">
+            <label>Nome do treinamento</label>
+            <input type="text" id="nomeTreinamentoCliente" placeholder="Ex: Treinamento Smart Maximus Plasma" required />
+          </div>
+        </div>
+        <div class="field-row single">
+          <div class="field">
+            <label>Observações</label>
+            <textarea id="observacoesCliente" placeholder="Opcional"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><h3>Equipamento e insumos</h3></div>
+        <div class="field-row">
+          <div class="field">
+            <label>${presencial ? 'Equipamento que o cliente possui' : 'Equipamento'}</label>
+            <input type="text" id="equipamentoCliente" placeholder="Ex: Smart Maximus Plasma" required />
+          </div>
+          <div class="field">
+            <label>Insumos</label>
+            <input type="text" id="insumosCliente" placeholder="Ex: Ponteiras, gel condutor" required />
+          </div>
+        </div>
+      </div>
+
+      ${
+        presencial
+          ? `
+      <div class="section">
+        <div class="section-title"><h3>Endereço</h3></div>
+        <div class="conditional-block" id="bloco-endereco-cliente">${renderEnderecoHTML('revenda-cliente')}</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><h3>Transporte</h3></div>
+        <div class="field-row single">
+          <div class="field">
+            <label>Transporte para a técnica</label>
+            <input type="text" id="transporteCliente" placeholder="Ex: Uber, revenda paga o combustível" required />
+          </div>
+        </div>
+      </div>
+      `
+          : ''
+      }
+    `;
+
+    if (presencial) {
+      ativarAutoPreenchimentoCep(container, 'revenda-cliente');
+    }
+  }
+
+  grupoTipoTreinamentoCliente.addEventListener('click', (e) => {
+    const pill = e.target.closest('.pill');
+    if (!pill) return;
+    tipoTreinamentoCliente = pill.dataset.val;
+    grupoTipoTreinamentoCliente.querySelectorAll('.pill').forEach((p) => p.classList.toggle('selected', p === pill));
+    renderCamposClienteDetalhe();
+  });
+
+  const destino = criarPillGroup(container, 'grupo-destino', 'propria_revenda', (valor) => {
+    const mostrarPropria = valor === 'propria_revenda';
+    camposPropria.style.display = mostrarPropria ? '' : 'none';
+    camposCliente.style.display = mostrarPropria ? 'none' : '';
+
+    // Campo required escondido trava o submit nativo em silêncio — precisa
+    // acompanhar a visibilidade do bloco, igual o padrão já usado no endereço.
+    camposObrigatoriosPropriaExtras.forEach((el) => {
+      el.required = mostrarPropria;
+    });
+    camposObrigatoriosEndereco.forEach((el) => {
+      el.required = mostrarPropria && modalidade.get() === 'presencial';
+    });
+
+    // Troca de branch limpa o que já tinha sido preenchido do outro lado.
+    tipoTreinamentoCliente = null;
+    grupoTipoTreinamentoCliente.querySelectorAll('.pill').forEach((p) => p.classList.remove('selected'));
+    camposClienteDetalhe.innerHTML = '';
   });
 
   let tipoReserva = 'unico';
@@ -312,6 +438,11 @@ export function renderFormRevenda(container, navigate, user) {
   container.querySelector('#form-revenda').addEventListener('submit', async (e) => {
     e.preventDefault();
     errorBox.innerHTML = '';
+
+    if (destino.get() === 'cliente_revenda' && !tipoTreinamentoCliente) {
+      errorBox.innerHTML = `<div class="error-note">Selecione o tipo de treinamento (Online ou Presencial).</div>`;
+      return;
+    }
 
     const opcoesData = tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : coletarDateOptions(dateOptionsEl);
 
@@ -357,6 +488,8 @@ export function renderFormRevenda(container, navigate, user) {
       const slaExpiraEm = calcularSlaExpiraEm(agora);
       const precisaTransporte = transporte.get() === 'sim';
       const temSalaCursos = salaCursos.get() === 'sim';
+      const clienteRevenda = destino.get() === 'cliente_revenda';
+      const presencialCliente = clienteRevenda && tipoTreinamentoCliente === 'presencial';
 
       const doc = {
         tipo: 'revenda',
@@ -364,21 +497,35 @@ export function renderFormRevenda(container, navigate, user) {
         vendedor: container.querySelector('#vendedor').value,
         vendedorEmail: user?.email || null,
         destinoTreinamento: destino.get(),
-        marcasQueTrabalha: container.querySelector('#marcasQueTrabalha').value,
-        trabalhaLinhaCompletaSmartGR: linhaCompleta.get() === 'sim',
-        principalPublico: container.querySelector('#principalPublico').value,
-        temTecnicaPropria: tecnicaPropria.get() === 'sim',
-        temSalaCursos,
-        capacidadeSala: temSalaCursos ? Number(container.querySelector('#capacidadeSala').value) || null : null,
-        possuiEspacoPratica: espacoPratica.get() === 'sim',
-        tipoPratica: espacoPratica.get() === 'sim' ? tipoPratica.get() : null,
-        modalidade: modalidade.get(),
-        endereco: modalidade.get() === 'presencial' ? coletarEndereco(container, 'revenda') : null,
-        precisaTransporte,
-        transporte: precisaTransporte
-          ? { quemPaga: quemPaga.get(), meio: container.querySelector('#meioTransporte').value }
-          : null,
-        tema: container.querySelector('#tema').value,
+
+        // Campos do fluxo "equipe própria" — ficam null quando é cliente da
+        // revenda, pra não misturar os dois formatos no mesmo documento.
+        marcasQueTrabalha: clienteRevenda ? null : container.querySelector('#marcasQueTrabalha').value,
+        trabalhaLinhaCompletaSmartGR: clienteRevenda ? null : linhaCompleta.get() === 'sim',
+        principalPublico: clienteRevenda ? null : container.querySelector('#principalPublico').value,
+        temTecnicaPropria: clienteRevenda ? null : tecnicaPropria.get() === 'sim',
+        temSalaCursos: clienteRevenda ? null : temSalaCursos,
+        capacidadeSala: clienteRevenda ? null : temSalaCursos ? Number(container.querySelector('#capacidadeSala').value) || null : null,
+        possuiEspacoPratica: clienteRevenda ? null : espacoPratica.get() === 'sim',
+        tipoPratica: clienteRevenda ? null : espacoPratica.get() === 'sim' ? tipoPratica.get() : null,
+        modalidade: clienteRevenda ? null : modalidade.get(),
+        endereco: clienteRevenda ? null : modalidade.get() === 'presencial' ? coletarEndereco(container, 'revenda') : null,
+        precisaTransporte: clienteRevenda ? null : precisaTransporte,
+        transporte:
+          !clienteRevenda && precisaTransporte
+            ? { quemPaga: quemPaga.get(), meio: container.querySelector('#meioTransporte').value }
+            : null,
+        tema: clienteRevenda ? null : container.querySelector('#tema').value,
+
+        // Campos do fluxo "cliente da revenda" — sempre sobre equipamentos.
+        tipoTreinamentoCliente: clienteRevenda ? tipoTreinamentoCliente : null,
+        nomeTreinamentoCliente: clienteRevenda ? container.querySelector('#nomeTreinamentoCliente').value : null,
+        observacoesCliente: clienteRevenda ? container.querySelector('#observacoesCliente').value : null,
+        equipamentoCliente: clienteRevenda ? container.querySelector('#equipamentoCliente').value : null,
+        insumosCliente: clienteRevenda ? container.querySelector('#insumosCliente').value : null,
+        enderecoCliente: presencialCliente ? coletarEndereco(container, 'revenda-cliente') : null,
+        transporteCliente: presencialCliente ? container.querySelector('#transporteCliente').value : null,
+
         tipoReserva,
         opcoesData,
         status: 'pendente',
@@ -393,13 +540,22 @@ export function renderFormRevenda(container, navigate, user) {
 
       notificarNovaSolicitacao(
         'revenda',
-        {
-          'Revenda/Rede': doc.nomeRevenda,
-          Vendedor: doc.vendedor,
-          Destino: doc.destinoTreinamento === 'propria_revenda' ? 'Equipe própria' : 'Cliente da revenda',
-          Tema: doc.tema,
-          Modalidade: doc.modalidade === 'online' ? 'Online' : 'Presencial'
-        },
+        clienteRevenda
+          ? {
+              'Revenda/Rede': doc.nomeRevenda,
+              Vendedor: doc.vendedor,
+              Destino: 'Cliente da revenda',
+              'Tipo de treinamento': doc.tipoTreinamentoCliente === 'online' ? 'Online' : 'Presencial',
+              'Nome do treinamento': doc.nomeTreinamentoCliente,
+              Equipamento: doc.equipamentoCliente
+            }
+          : {
+              'Revenda/Rede': doc.nomeRevenda,
+              Vendedor: doc.vendedor,
+              Destino: 'Equipe própria',
+              Tema: doc.tema,
+              Modalidade: doc.modalidade === 'online' ? 'Online' : 'Presencial'
+            },
         { copiaThayla: container.querySelector('#copia-thayla').checked }
       );
 

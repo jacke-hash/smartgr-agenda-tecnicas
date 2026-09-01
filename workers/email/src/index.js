@@ -67,11 +67,25 @@ function formatarCamposSolicitacao(tipo, s) {
     `;
   }
 
+  if (tipo === 'revenda' && s.destinoTreinamento === 'cliente_revenda') {
+    return `
+      <li><strong>Revenda/Rede:</strong> ${s.nomeRevenda || '—'}</li>
+      <li><strong>Vendedor:</strong> ${s.vendedor || '—'}</li>
+      <li><strong>Destino:</strong> Cliente da revenda</li>
+      <li><strong>Tipo de treinamento:</strong> ${s.tipoTreinamentoCliente === 'online' ? 'Online' : 'Presencial'}</li>
+      <li><strong>Treinamento:</strong> ${s.nomeTreinamentoCliente || '—'}</li>
+      <li><strong>Equipamento:</strong> ${s.equipamentoCliente || '—'}</li>
+      <li><strong>Insumos:</strong> ${s.insumosCliente || '—'}</li>
+      ${s.transporteCliente ? `<li><strong>Transporte:</strong> ${s.transporteCliente}</li>` : ''}
+      ${s.observacoesCliente ? `<li><strong>Observações:</strong> ${s.observacoesCliente}</li>` : ''}
+    `;
+  }
+
   if (tipo === 'revenda') {
     return `
       <li><strong>Revenda/Rede:</strong> ${s.nomeRevenda || '—'}</li>
       <li><strong>Vendedor:</strong> ${s.vendedor || '—'}</li>
-      <li><strong>Destino:</strong> ${s.destinoTreinamento === 'propria_revenda' ? 'Equipe própria' : 'Cliente da revenda'}</li>
+      <li><strong>Destino:</strong> Equipe própria</li>
       <li><strong>Tema:</strong> ${s.tema || '—'}</li>
       <li><strong>Marcas que trabalha:</strong> ${s.marcasQueTrabalha || '—'}</li>
       <li><strong>Linha completa SmartGR:</strong> ${s.trabalhaLinhaCompletaSmartGR ? 'Sim' : 'Não'}</li>

@@ -47,6 +47,43 @@ export function renderEnderecoHTML(prefix) {
   `;
 }
 
+// Busca rua/bairro/cidade/UF pelo CEP (ViaCEP, pública, sem chave) assim que
+// o campo perde o foco — só preenche automaticamente o que o Google/usuário
+// não digita facilmente; número e complemento continuam manuais (ViaCEP
+// nunca devolve isso). CEP não encontrado ou erro de rede: não bloqueia
+// nada, os campos continuam editáveis manualmente como sempre foram.
+export function ativarAutoPreenchimentoCep(container, prefix) {
+  const campoCep = container.querySelector(`[data-endereco="${prefix}-cep"]`);
+  if (!campoCep) return;
+
+  campoCep.addEventListener('blur', async () => {
+    const cepLimpo = campoCep.value.replace(/\D/g, '');
+    if (cepLimpo.length !== 8) return;
+
+    try {
+      const resp = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`);
+      if (!resp.ok) return;
+      const dados = await resp.json();
+      if (dados.erro) return;
+
+      const set = (campo, valor) => {
+        const el = container.querySelector(`[data-endereco="${prefix}-${campo}"]`);
+        if (el && valor) el.value = valor;
+      };
+      set('rua', dados.logradouro);
+      set('bairro', dados.bairro);
+      set('cidade', dados.localidade);
+      set('uf', dados.uf);
+
+      // ViaCEP nunca devolve número — leva o foco pra lá, próximo campo que
+      // realmente precisa de digitação manual.
+      container.querySelector(`[data-endereco="${prefix}-numero"]`)?.focus();
+    } catch (err) {
+      console.error('Falha ao buscar CEP:', err);
+    }
+  });
+}
+
 export function coletarEndereco(container, prefix) {
   const get = (campo) => container.querySelector(`[data-endereco="${prefix}-${campo}"]`)?.value || '';
   return {

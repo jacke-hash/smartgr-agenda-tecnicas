@@ -37,6 +37,9 @@ function renderTagsSolicitacao(item) {
   const tipoInfo = TAG_TIPO[item.tipo];
   if (tipoInfo) tags.push(`<span class="tag ${tipoInfo.cls}">${tipoInfo.label}</span>`);
   if (item.modalidade) tags.push(`<span class="tag ${item.modalidade}">${item.modalidade === 'online' ? 'Online' : 'Presencial'}</span>`);
+  if (item.tipoTreinamentoCliente) {
+    tags.push(`<span class="tag ${item.tipoTreinamentoCliente}">${item.tipoTreinamentoCliente === 'online' ? 'Online' : 'Presencial'}</span>`);
+  }
   if (item.tipoTreinamento) tags.push(`<span class="tag ${item.tipoTreinamento}">${item.tipoTreinamento === 'interno' ? 'Interno' : 'Externo'}</span>`);
   return `<div class="tags">${tags.join('')}</div>`;
 }
@@ -61,19 +64,43 @@ function renderInfoConsumidorFinal(item) {
   `;
 }
 
-function renderInfoRevenda(item) {
+function formatarEnderecoResumido(endereco) {
+  if (!endereco) return null;
+  return `${endereco.rua}, ${endereco.numero} — ${endereco.bairro}, ${endereco.cidade}/${endereco.uf}`;
+}
+
+function renderInfoRevendaCliente(item) {
   return `
     <div class="info-grid">
       <div class="info-item"><span>Revenda/Rede</span><strong>${item.nomeRevenda || '—'}</strong></div>
       <div class="info-item"><span>Vendedor</span><strong>${item.vendedor || '—'}</strong></div>
-      <div class="info-item"><span>Destino</span><strong>${item.destinoTreinamento === 'propria_revenda' ? 'Equipe própria' : 'Cliente da revenda'}</strong></div>
+      <div class="info-item"><span>Destino</span><strong>Cliente da revenda</strong></div>
+      <div class="info-item"><span>Tipo de treinamento</span><strong>${item.tipoTreinamentoCliente === 'online' ? 'Online' : 'Presencial'}</strong></div>
+      <div class="info-item"><span>Nome do treinamento</span><strong>${item.nomeTreinamentoCliente || '—'}</strong></div>
+      <div class="info-item"><span>Equipamento</span><strong>${item.equipamentoCliente || '—'}</strong></div>
+      <div class="info-item"><span>Insumos</span><strong>${item.insumosCliente || '—'}</strong></div>
+      ${item.enderecoCliente ? `<div class="info-item wide"><span>Endereço</span><strong>${formatarEnderecoResumido(item.enderecoCliente)}</strong></div>` : ''}
+      ${item.transporteCliente ? `<div class="info-item"><span>Transporte</span><strong>${item.transporteCliente}</strong></div>` : ''}
+      ${item.observacoesCliente ? `<div class="info-item wide"><span>Observações</span><strong>${item.observacoesCliente}</strong></div>` : ''}
+    </div>
+  `;
+}
+
+function renderInfoRevenda(item) {
+  if (item.destinoTreinamento === 'cliente_revenda') return renderInfoRevendaCliente(item);
+
+  return `
+    <div class="info-grid">
+      <div class="info-item"><span>Revenda/Rede</span><strong>${item.nomeRevenda || '—'}</strong></div>
+      <div class="info-item"><span>Vendedor</span><strong>${item.vendedor || '—'}</strong></div>
+      <div class="info-item"><span>Destino</span><strong>Equipe própria</strong></div>
       <div class="info-item"><span>Tema</span><strong>${item.tema || '—'}</strong></div>
       <div class="info-item"><span>Marcas</span><strong>${item.marcasQueTrabalha || '—'}</strong></div>
       <div class="info-item"><span>Linha completa SmartGR</span><strong>${item.trabalhaLinhaCompletaSmartGR ? 'Sim' : 'Não'}</strong></div>
       <div class="info-item"><span>Sala de cursos</span><strong>${item.temSalaCursos ? `Sim (${item.capacidadeSala || '?'} pessoas)` : 'Não'}</strong></div>
       <div class="info-item"><span>Espaço de prática</span><strong>${item.possuiEspacoPratica ? `Sim (${item.tipoPratica || '—'})` : 'Não'}</strong></div>
       <div class="info-item"><span>Transporte</span><strong>${item.precisaTransporte ? `${item.transporte?.meio} — paga: ${item.transporte?.quemPaga}` : 'Não precisa'}</strong></div>
-      ${item.endereco ? `<div class="info-item wide"><span>Endereço</span><strong>${item.endereco.rua}, ${item.endereco.numero} — ${item.endereco.bairro}, ${item.endereco.cidade}/${item.endereco.uf}</strong></div>` : ''}
+      ${item.endereco ? `<div class="info-item wide"><span>Endereço</span><strong>${formatarEnderecoResumido(item.endereco)}</strong></div>` : ''}
     </div>
   `;
 }
@@ -439,8 +466,12 @@ export function renderPainelJulia(container) {
 
     const tecnica = tecnicas.find((t) => t.id === estado.tecnicaId);
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
-    const modalidade = item.tipo === 'workshop' ? 'presencial' : item.modalidade;
-    const endereco = item.endereco || null;
+    // Revenda "cliente da revenda" guarda modalidade/endereço em campos
+    // próprios (tipoTreinamentoCliente/enderecoCliente) — os campos
+    // genéricos (modalidade/endereco) ficam null nesse fluxo.
+    const revendaCliente = item.tipo === 'revenda' && item.destinoTreinamento === 'cliente_revenda';
+    const modalidade = item.tipo === 'workshop' ? 'presencial' : revendaCliente ? item.tipoTreinamentoCliente : item.modalidade;
+    const endereco = revendaCliente ? item.enderecoCliente || null : item.endereco || null;
 
     // Só os campos preenchidos pelo vendedor no formulário original — exclui
     // metadados internos (_id/_colecao) e Timestamps do Firestore, que não

@@ -1,7 +1,7 @@
 import { collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
 import { calcularSlaExpiraEm } from '../utils/sla.js';
-import { renderEnderecoHTML, coletarEndereco } from '../utils/endereco.js';
+import { renderEnderecoHTML, coletarEndereco, ativarAutoPreenchimentoCep } from '../utils/endereco.js';
 import {
   renderDateOptionsHTML,
   coletarDateOptions,
@@ -177,6 +177,7 @@ export function renderFormWorkshop(container, navigate, user) {
   `;
 
   container.querySelector('#btn-voltar').addEventListener('click', () => navigate('#/'));
+  ativarAutoPreenchimentoCep(container, 'workshop');
 
   const campoQualEquipamento = container.querySelector('#campo-qual-equipamento');
   const equipamento = criarPillGroup(container, 'grupo-equipamento', 'sim', (valor) => {
