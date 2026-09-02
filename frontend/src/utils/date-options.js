@@ -47,6 +47,84 @@ function opcaoUnicoPreenchida(o) {
   return Boolean(o && o.data && o.horaInicio && o.horaTermino);
 }
 
+// --- Modo único com datas SUGERIDAS pelo sistema (worker /sugerir-datas) ---
+// Paralelo a renderDateOptionsHTML/coletarDateOptions — não substitui essas
+// funções (período continua usando o fluxo de digitação livre de sempre,
+// só o modo único ganhou sugestão). A data de cada opção é travada (uma por
+// dia sugerido, o vendedor não digita) — só horário início/término continua
+// editável. Reaproveita opcaoUnicoPreenchida/dateOptionsValidas/
+// opcoesForaDoPrazo/destacarOpcoesInvalidas — mesmo shape {data, horaInicio,
+// horaTermino}, então rules/SLA/Calendar não precisam saber que a origem da
+// data mudou.
+export function renderDateOptionsSugeridasHTML(datasDisponiveis) {
+  if (!datasDisponiveis || datasDisponiveis.length === 0) {
+    return `<div class="empty-state">Nenhuma data disponível encontrada no momento. Tente novamente mais tarde ou fale com a Julia.</div>`;
+  }
+  return datasDisponiveis
+    .map(
+      (dataISO, i) => `
+    <label class="date-option sugerida" data-idx="${i}">
+      <div class="date-sugerida-topo">
+        <input type="checkbox" class="date-sugerida-check" data-idx="${i}" />
+        <span class="opt-label">${formatarDataBR(dataISO)}</span>
+      </div>
+      <div class="row">
+        <div class="time-pair">
+          <span>Início</span>
+          <input type="time" data-idx="${i}" data-field="horaInicio" />
+        </div>
+        <div class="time-pair">
+          <span>Término</span>
+          <input type="time" data-idx="${i}" data-field="horaTermino" />
+        </div>
+      </div>
+    </label>
+  `
+    )
+    .join('');
+}
+
+// Destaque visual de "marcada" (borda azul) — reflete o estado do checkbox
+// na hora, sem esperar re-render nenhum.
+export function ativarSelecaoSugerida(container) {
+  container.querySelectorAll('.date-sugerida-check').forEach((check) => {
+    check.addEventListener('change', () => {
+      check.closest('.date-option.sugerida')?.classList.toggle('selecionada', check.checked);
+    });
+  });
+}
+
+// Só monta {data, horaInicio, horaTermino} pras opções com a caixinha
+// marcada — as demais ficam vazias (mesmo tratamento de "opção não
+// oferecida" que o modo digitado já tinha).
+export function coletarDateOptionsSugeridas(container, datasDisponiveis) {
+  return datasDisponiveis.map((dataISO, idx) => {
+    const label = container.querySelector(`.date-option.sugerida[data-idx="${idx}"]`);
+    const marcada = label?.querySelector('.date-sugerida-check')?.checked;
+    if (!marcada) return { data: '', horaInicio: '', horaTermino: '' };
+    return {
+      data: dataISO,
+      horaInicio: label.querySelector('[data-field="horaInicio"]')?.value || '',
+      horaTermino: label.querySelector('[data-field="horaTermino"]')?.value || ''
+    };
+  });
+}
+
+// Caixa marcada mas sem horário preenchido — a pessoa claramente quis
+// oferecer essa data, só esqueceu o horário. Erro diferente de "não marcou".
+export function opcoesSugeridasIncompletas(container, datasDisponiveis) {
+  const idxs = [];
+  datasDisponiveis.forEach((_, idx) => {
+    const label = container.querySelector(`.date-option.sugerida[data-idx="${idx}"]`);
+    const marcada = label?.querySelector('.date-sugerida-check')?.checked;
+    if (!marcada) return;
+    const horaInicio = label.querySelector('[data-field="horaInicio"]')?.value;
+    const horaTermino = label.querySelector('[data-field="horaTermino"]')?.value;
+    if (!horaInicio || !horaTermino) idxs.push(idx);
+  });
+  return idxs;
+}
+
 // Só um mínimo das 4 opções precisa vir preenchido — o resto fica opcional
 // (o vendedor pode não ter mais alternativas de data pra oferecer).
 export function dateOptionsValidas(opcoes, minPreenchidas = 2) {

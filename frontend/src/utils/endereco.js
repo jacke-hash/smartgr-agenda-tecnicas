@@ -52,8 +52,13 @@ export function renderEnderecoHTML(prefix) {
 // não digita facilmente; número e complemento continuam manuais (ViaCEP
 // nunca devolve isso). CEP não encontrado ou erro de rede: não bloqueia
 // nada, os campos continuam editáveis manualmente como sempre foram.
-export function ativarAutoPreenchimentoCep(container, prefix) {
+// `aoPreencher` (opcional): chamado depois que a cidade é preenchida (por
+// CEP OU digitada manualmente) — quem chama usa isso pra saber quando
+// reconsultar datas sugeridas (a prioridade da Vithoria em Rio Claro depende
+// da cidade, que só existe depois desse preenchimento).
+export function ativarAutoPreenchimentoCep(container, prefix, aoPreencher) {
   const campoCep = container.querySelector(`[data-endereco="${prefix}-cep"]`);
+  const campoCidade = container.querySelector(`[data-endereco="${prefix}-cidade"]`);
   if (!campoCep) return;
 
   campoCep.addEventListener('blur', async () => {
@@ -78,10 +83,15 @@ export function ativarAutoPreenchimentoCep(container, prefix) {
       // ViaCEP nunca devolve número — leva o foco pra lá, próximo campo que
       // realmente precisa de digitação manual.
       container.querySelector(`[data-endereco="${prefix}-numero"]`)?.focus();
+      aoPreencher?.();
     } catch (err) {
       console.error('Falha ao buscar CEP:', err);
     }
   });
+
+  // Cidade digitada manualmente (sem passar pelo CEP, ou corrigida depois do
+  // autopreenchimento) também precisa disparar o mesmo aviso.
+  campoCidade?.addEventListener('blur', () => aoPreencher?.());
 }
 
 export function coletarEndereco(container, prefix) {

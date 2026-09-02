@@ -23,6 +23,16 @@ const COLECOES_SOLICITACOES = ['solicitacoes_consumidor_final', 'solicitacoes_re
 // entre a checagem de conflito e a listagem de eventos reais da técnica.
 const TIPOS_EVENTO_IGNORADOS = new Set(['workingLocation', 'birthday']);
 
+// Reunião de equipe (principalmente as que têm link de Google Meet) não é um
+// compromisso que ocupa a técnica pra treinamento — é sync interno, curto,
+// não representa indisponibilidade real. `hangoutLink`/`conferenceData` é o
+// jeito confiável de detectar isso na API do Google (não dá pra confiar no
+// título do evento). Mesmo critério usado tanto pra checar conflito quanto
+// pra sugerir datas disponíveis.
+function eventoIgnoravelParaDisponibilidade(evento) {
+  return TIPOS_EVENTO_IGNORADOS.has(evento.eventType) || Boolean(evento.hangoutLink || evento.conferenceData);
+}
+
 function json(data, status, headers) {
   return Response.json(data, { status: status || 200, headers });
 }
@@ -468,9 +478,17 @@ function diaDaSemana(dataISO) {
 }
 
 function diaAnteriorISO(dataISO) {
+  return somarDiasISO(dataISO, -1);
+}
+
+function somarDiasISO(dataISO, dias) {
   const d = new Date(`${dataISO}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - 1);
+  d.setUTCDate(d.getUTCDate() + dias);
   return d.toISOString().slice(0, 10);
+}
+
+function hojeISOBrasilia() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 }
 
 // Todos os dias civis cobertos por uma opção — só a data (único) ou cada dia
@@ -579,11 +597,10 @@ async function verificarConflitosTecnica(env, tecnica, opcoesData, tipoReserva, 
     console.error(`verificar-conflitos: events.list falhou pra técnica ${tecnica.id}:`, respEventos.status, await respEventos.text());
     return null;
   }
-  // "Local de trabalho: Escritório" é eventType 'workingLocation' — recurso
-  // do Google Calendar só pra indicar ONDE ela vai estar naquele dia, não um
-  // compromisso de verdade. Marcar "Escritório" a semana inteira não pode
-  // bloquear escala nenhuma (TIPOS_EVENTO_IGNORADOS, topo do arquivo).
-  const eventos = ((await respEventos.json()).items || []).filter((e) => !TIPOS_EVENTO_IGNORADOS.has(e.eventType));
+  // "Local de trabalho: Escritório" (workingLocation) e reunião de equipe
+  // (link de Meet) não são compromissos de verdade — não podem bloquear
+  // aprovação nenhuma (eventoIgnoravelParaDisponibilidade, topo do arquivo).
+  const eventos = ((await respEventos.json()).items || []).filter((e) => !eventoIgnoravelParaDisponibilidade(e));
   const aprovadasFirestore = aprovadasPorColecao.flat().filter((doc) => doc.id !== solicitacaoIdAtual && doc.dataEscolhida);
 
   function eventoConflitanteEm(inicioMs, fimMs) {
@@ -652,6 +669,84 @@ async function handleVerificarConflitos(request, env, headers) {
 
   const conflitos = Object.fromEntries(entradas.filter(([, v]) => v !== null));
   return json({ status: 'ok', conflitos }, 200, headers);
+}
+
+const HORA_COMERCIAL_INICIO = 8;
+const HORA_COMERCIAL_FIM = 18;
+
+// Um dia é "ocupado" pra uma técnica se ela tem evento real (já filtrado por
+// eventoIgnoravelParaDisponibilidade) sobrepondo o horário comercial
+// (08h-18h Brasília), ou se ela trabalhou no domingo anterior (mesma regra
+// de folga pós-domingo já aplicada na aprovação — domingosAntesDeSegunda).
+function tecnicaOcupadaNoDia(eventos, diaISO) {
+  const inicioComercialMs = meiaNoiteBrasiliaMs(diaISO) + HORA_COMERCIAL_INICIO * 60 * 60 * 1000;
+  const fimComercialMs = meiaNoiteBrasiliaMs(diaISO) + HORA_COMERCIAL_FIM * 60 * 60 * 1000;
+  if (eventos.some((e) => eventoSobrepoe(e, inicioComercialMs, fimComercialMs))) return true;
+
+  if (diaDaSemana(diaISO) === 1) {
+    const domingo = diaAnteriorISO(diaISO);
+    if (eventos.some((e) => eventoTocaDia(e, domingo))) return true;
+  }
+  return false;
+}
+
+// Sugere dias (não horários — só o dia) em que PELO MENOS UMA das técnicas
+// da lista está livre de verdade. Quem chama decide a lista: só a Vithoria
+// (Rio Claro, prioridade dela) ou todas as ativas (demais casos) — esta rota
+// não sabe nem precisa saber o que é "Rio Claro".
+async function handleSugerirDatas(request, env, headers) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ status: 'error', message: 'body inválido' }, 400, headers);
+  }
+
+  const tecnicaIds = Array.isArray(body?.tecnicaIds) ? body.tecnicaIds : [];
+  const diasMinimos = body.diasMinimos || 7;
+  const quantidade = body.quantidade || 4;
+  if (tecnicaIds.length === 0) {
+    return json({ status: 'error', message: 'tecnicaIds é obrigatório' }, 400, headers);
+  }
+
+  const JANELA_MAX_DIAS = 90;
+  const primeiroDia = somarDiasISO(hojeISOBrasilia(), diasMinimos);
+  const ultimoDia = somarDiasISO(primeiroDia, JANELA_MAX_DIAS);
+  const timeMin = new Date(meiaNoiteBrasiliaMs(primeiroDia)).toISOString();
+  const timeMax = new Date(meiaNoiteBrasiliaMs(ultimoDia) + DIA_MS).toISOString();
+
+  // Uma chamada events.list por técnica cobrindo a janela toda — mesmo
+  // padrão de verificarConflitosTecnica/handleEscalaEventosTecnica. Técnica
+  // não conectada ou com falha vira `null` (não entra na conta de "livre" —
+  // sem dado real, não dá pra afirmar disponibilidade, bem diferente de
+  // "zero eventos = sempre livre").
+  const eventosPorTecnica = await Promise.all(
+    tecnicaIds.map(async (tecnicaId) => {
+      try {
+        const tecnica = await getTecnica(env, tecnicaId);
+        if (!tecnica?.refreshTokenEncrypted) return null;
+        const refreshToken = await decryptSecret(tecnica.refreshTokenEncrypted, env.TOKEN_ENCRYPTION_KEY);
+        const { access_token: accessToken } = await refreshAccessToken(env, refreshToken);
+        const resp = await fetch(
+          `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (!resp.ok) return null;
+        return ((await resp.json()).items || []).filter((e) => !eventoIgnoravelParaDisponibilidade(e));
+      } catch (err) {
+        console.error(`sugerir-datas: falha ao buscar agenda da técnica ${tecnicaId}:`, err.message);
+        return null;
+      }
+    })
+  );
+
+  const datas = [];
+  for (let diaISO = primeiroDia; diaISO <= ultimoDia && datas.length < quantidade; diaISO = somarDiasISO(diaISO, 1)) {
+    const algumaLivre = eventosPorTecnica.some((eventos) => eventos !== null && !tecnicaOcupadaNoDia(eventos, diaISO));
+    if (algumaLivre) datas.push(diaISO);
+  }
+
+  return json({ status: 'ok', datas }, 200, headers);
 }
 
 export default {
@@ -733,6 +828,15 @@ export default {
         return await handleEscalaEventosTecnica(request, env, headers);
       } catch (err) {
         console.error('escala/eventos-tecnica: exceção não tratada:', err.stack || err.message || err);
+        return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
+      }
+    }
+
+    if (url.pathname === '/sugerir-datas' && request.method === 'POST') {
+      try {
+        return await handleSugerirDatas(request, env, headers);
+      } catch (err) {
+        console.error('sugerir-datas: exceção não tratada:', err.stack || err.message || err);
         return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
       }
     }

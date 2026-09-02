@@ -1,12 +1,13 @@
-import { collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, Timestamp, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
 import { calcularSlaExpiraEm } from '../utils/sla.js';
 import {
-  renderDateOptionsHTML,
-  coletarDateOptions,
+  renderDateOptionsSugeridasHTML,
+  coletarDateOptionsSugeridas,
+  ativarSelecaoSugerida,
+  opcoesSugeridasIncompletas,
   dateOptionsValidas,
   opcoesForaDoPrazo,
-  opcoesUnicoDuplicadas,
   destacarOpcoesInvalidas,
   renderPeriodoOptionsHTML,
   ativarSincroniaPeriodo,
@@ -17,14 +18,18 @@ import {
   opcoesPeriodoDuplicadas
 } from '../utils/date-options.js';
 import { renderEnderecoHTML, coletarEndereco, ativarAutoPreenchimentoCep } from '../utils/endereco.js';
+import { normalizarTexto } from '../utils/texto.js';
 import { notificarNovaSolicitacao } from '../utils/notificar.js';
 
 const UNIDADES = ['Zona Sul', 'Zona Leste', 'Rio Claro', 'Recife', 'Porto Alegre'];
+const VITHORIA_EMAIL = 'vithoria@smartgr.com.br';
 
 export function renderFormConsumidorFinal(container, navigate, user) {
   let participantes = [{ nome: '', profissao: '' }];
   let modalidade = 'presencial';
   let tipoTreinamento = 'interno';
+  let tecnicas = [];
+  let datasSugeridasAtuais = [];
 
   container.innerHTML = `
     <button class="back-link" id="btn-voltar">← Voltar</button>
@@ -144,10 +149,10 @@ export function renderFormConsumidorFinal(container, navigate, user) {
 
         <div class="section">
           <div class="section-title">
-            <h3 id="titulo-datas">Datas e horários de preferência</h3>
-            <span id="legenda-datas">informe pelo menos 2 das 4 opções, com início e término</span>
+            <h3 id="titulo-datas">Datas disponíveis</h3>
+            <span id="legenda-datas">carregando sugestões de data...</span>
           </div>
-          <div class="date-options" id="date-options">${renderDateOptionsHTML()}</div>
+          <div class="date-options" id="date-options"><div class="loading-state">Carregando datas disponíveis...</div></div>
           <div class="advance-note">
             ⚠️ Antecedência mínima de 7 dias a partir de hoje. Datas fora do prazo não podem ser enviadas.
           </div>
@@ -229,7 +234,23 @@ export function renderFormConsumidorFinal(container, navigate, user) {
   // voltar a ser `required` quando o bloco reaparece; o complemento (opcional)
   // nunca entra aqui.
   const camposObrigatoriosExterno = Array.from(blocoExterno.querySelectorAll('[required]'));
-  ativarAutoPreenchimentoCep(container, 'final');
+  ativarAutoPreenchimentoCep(container, 'final', () => atualizarSugestoesUnico());
+
+  async function carregarTecnicas() {
+    const snap = await getDocs(query(collection(db, 'tecnicas'), where('ativo', '==', true)));
+    tecnicas = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }
+
+  // Interno: unidade selecionada no próprio form. Externo: cidade digitada
+  // no endereço (mesmo texto livre que revenda/workshop usam) — normaliza
+  // pra não depender de acento/maiúscula batendo exato.
+  function ehRioClaro() {
+    if (tipoTreinamento === 'interno') {
+      return container.querySelector('#unidade').value === 'Rio Claro';
+    }
+    const cidade = container.querySelector('[data-endereco="final-cidade"]')?.value || '';
+    return normalizarTexto(cidade) === normalizarTexto('Rio Claro');
+  }
 
   function aplicarTrava() {
     grupoModalidade.querySelectorAll('.pill').forEach((p) => {
@@ -268,7 +289,12 @@ export function renderFormConsumidorFinal(container, navigate, user) {
     tipoTreinamento = pill.dataset.val;
     if (tipoTreinamento === 'externo') modalidade = 'presencial';
     aplicarTrava();
+    // Interno usa unidade, externo usa cidade do endereço — a fonte de "é
+    // Rio Claro" muda, então reconsulta.
+    atualizarSugestoesUnico();
   });
+
+  container.querySelector('#unidade').addEventListener('change', () => atualizarSugestoesUnico());
 
   aplicarTrava();
 
@@ -287,10 +313,53 @@ export function renderFormConsumidorFinal(container, navigate, user) {
       dateOptionsEl.innerHTML = renderPeriodoOptionsHTML();
       ativarSincroniaPeriodo(dateOptionsEl);
     } else {
-      tituloDatas.textContent = 'Datas e horários de preferência';
-      legendaDatas.textContent = 'informe pelo menos 2 das 4 opções, com início e término';
-      dateOptionsEl.innerHTML = renderDateOptionsHTML();
+      tituloDatas.textContent = 'Datas disponíveis';
+      atualizarSugestoesUnico();
     }
+  }
+
+  // Busca no worker os dias em que alguma técnica já está livre de verdade —
+  // pra Rio Claro, prioriza só a agenda da Vithoria (Julia ainda pode
+  // atribuir outra técnica na aprovação, isso só muda a SUGESTÃO de data);
+  // pros demais casos, olha todas as técnicas ativas. tipoReserva pode virar
+  // 'periodo' enquanto essa busca está em voo — não pisa no render dela.
+  async function atualizarSugestoesUnico() {
+    if (tipoReserva !== 'unico') return;
+    const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
+
+    dateOptionsEl.innerHTML = `<div class="loading-state">Carregando datas disponíveis...</div>`;
+    legendaDatas.textContent = 'carregando sugestões de data...';
+
+    if (!calendarWorkerUrl || tecnicas.length === 0) {
+      datasSugeridasAtuais = [];
+      dateOptionsEl.innerHTML = `<div class="empty-state">Não foi possível carregar as datas disponíveis agora. Tente novamente em instantes.</div>`;
+      return;
+    }
+
+    const vithoria = tecnicas.find((t) => t.email === VITHORIA_EMAIL);
+    const usarSoVithoria = ehRioClaro() && Boolean(vithoria);
+    const tecnicaIds = usarSoVithoria ? [vithoria.id] : tecnicas.map((t) => t.id);
+
+    try {
+      const resp = await fetch(`${calendarWorkerUrl}/sugerir-datas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tecnicaIds, diasMinimos: 7, quantidade: 4 })
+      });
+      const resultado = await resp.json();
+      datasSugeridasAtuais = resp.ok ? resultado.datas || [] : [];
+    } catch (err) {
+      console.error('Falha ao buscar datas sugeridas:', err);
+      datasSugeridasAtuais = [];
+    }
+
+    if (tipoReserva !== 'unico') return;
+
+    const minimo = Math.min(2, datasSugeridasAtuais.length);
+    legendaDatas.textContent =
+      datasSugeridasAtuais.length > 0 ? `selecione pelo menos ${minimo} das opções abaixo e informe o horário` : '';
+    dateOptionsEl.innerHTML = renderDateOptionsSugeridasHTML(datasSugeridasAtuais);
+    ativarSelecaoSugerida(dateOptionsEl);
   }
 
   grupoTipoReserva.addEventListener('click', (e) => {
@@ -306,18 +375,30 @@ export function renderFormConsumidorFinal(container, navigate, user) {
   // tipoReserva muda (só o innerHTML dele), então o listener delegado
   // continua valendo pros campos novos.
   dateOptionsEl.addEventListener('input', () => {
-    const opcoesData = tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : coletarDateOptions(dateOptionsEl);
-    const duplicadas = tipoReserva === 'periodo' ? opcoesPeriodoDuplicadas(opcoesData) : opcoesUnicoDuplicadas(opcoesData);
+    // Único agora usa dias já sugeridos pelo sistema — datas nunca colidem
+    // entre si por construção, então a checagem de duplicata só faz sentido
+    // pro período (que ainda é digitado livremente).
+    if (tipoReserva !== 'periodo') return;
+    const opcoesData = coletarPeriodoOptions(dateOptionsEl);
+    const duplicadas = opcoesPeriodoDuplicadas(opcoesData);
     destacarOpcoesInvalidas(dateOptionsEl, duplicadas);
     errorBox.innerHTML =
       duplicadas.length > 0 ? `<div class="error-note">As datas e horários das opções precisam ser diferentes entre si.</div>` : '';
   });
 
+  carregarTecnicas().then(() => atualizarSugestoesUnico());
+
   container.querySelector('#form-final').addEventListener('submit', async (e) => {
     e.preventDefault();
     errorBox.innerHTML = '';
 
-    const opcoesData = tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : coletarDateOptions(dateOptionsEl);
+    if (tipoReserva === 'unico' && datasSugeridasAtuais.length === 0) {
+      errorBox.innerHTML = `<div class="error-note">Não há datas disponíveis no momento. Tente novamente mais tarde ou fale com a Julia.</div>`;
+      return;
+    }
+
+    const opcoesData =
+      tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : coletarDateOptionsSugeridas(dateOptionsEl, datasSugeridasAtuais);
 
     if (tipoReserva === 'periodo') {
       const ordemInvalida = opcoesPeriodoComOrdemInvalida(opcoesData);
@@ -326,22 +407,30 @@ export function renderFormConsumidorFinal(container, navigate, user) {
         errorBox.innerHTML = `<div class="error-note">A data término não pode ser antes da data início. Corrija a(s) opção(ões) destacada(s).</div>`;
         return;
       }
+
+      const duplicadas = opcoesPeriodoDuplicadas(opcoesData);
+      if (duplicadas.length > 0) {
+        destacarOpcoesInvalidas(dateOptionsEl, duplicadas);
+        errorBox.innerHTML = `<div class="error-note">As datas e horários das opções precisam ser diferentes entre si.</div>`;
+        return;
+      }
+    } else {
+      const incompletas = opcoesSugeridasIncompletas(dateOptionsEl, datasSugeridasAtuais);
+      if (incompletas.length > 0) {
+        destacarOpcoesInvalidas(dateOptionsEl, incompletas);
+        errorBox.innerHTML = `<div class="error-note">Preencha o horário de início e término das datas marcadas.</div>`;
+        return;
+      }
     }
 
-    const duplicadas = tipoReserva === 'periodo' ? opcoesPeriodoDuplicadas(opcoesData) : opcoesUnicoDuplicadas(opcoesData);
-    if (duplicadas.length > 0) {
-      destacarOpcoesInvalidas(dateOptionsEl, duplicadas);
-      errorBox.innerHTML = `<div class="error-note">As datas e horários das opções precisam ser diferentes entre si.</div>`;
-      return;
-    }
-
-    const opcoesValidas = tipoReserva === 'periodo' ? periodoOptionsValidas(opcoesData) : dateOptionsValidas(opcoesData);
+    const minimoUnico = Math.min(2, datasSugeridasAtuais.length);
+    const opcoesValidas = tipoReserva === 'periodo' ? periodoOptionsValidas(opcoesData) : dateOptionsValidas(opcoesData, minimoUnico);
     if (!opcoesValidas) {
       destacarOpcoesInvalidas(dateOptionsEl, []);
       errorBox.innerHTML =
         tipoReserva === 'periodo'
           ? `<div class="error-note">Preencha pelo menos 1 das 2 opções de período (data início, data término e horários).</div>`
-          : `<div class="error-note">Preencha pelo menos 2 das 4 opções de data com início e término.</div>`;
+          : `<div class="error-note">Selecione pelo menos ${minimoUnico} das datas sugeridas e informe o horário.</div>`;
       return;
     }
 

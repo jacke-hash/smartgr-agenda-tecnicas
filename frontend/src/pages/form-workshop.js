@@ -1,13 +1,15 @@
-import { collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, Timestamp, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
 import { calcularSlaExpiraEm } from '../utils/sla.js';
 import { renderEnderecoHTML, coletarEndereco, ativarAutoPreenchimentoCep } from '../utils/endereco.js';
+import { normalizarTexto } from '../utils/texto.js';
 import {
-  renderDateOptionsHTML,
-  coletarDateOptions,
+  renderDateOptionsSugeridasHTML,
+  coletarDateOptionsSugeridas,
+  ativarSelecaoSugerida,
+  opcoesSugeridasIncompletas,
   dateOptionsValidas,
   opcoesForaDoPrazo,
-  opcoesUnicoDuplicadas,
   destacarOpcoesInvalidas,
   renderPeriodoOptionsHTML,
   ativarSincroniaPeriodo,
@@ -18,6 +20,8 @@ import {
   opcoesPeriodoDuplicadas
 } from '../utils/date-options.js';
 import { notificarNovaSolicitacao } from '../utils/notificar.js';
+
+const VITHORIA_EMAIL = 'vithoria@smartgr.com.br';
 
 function criarPillGroup(container, id, valorInicial, aoMudar) {
   const el = container.querySelector(`#${id}`);
@@ -141,10 +145,10 @@ export function renderFormWorkshop(container, navigate, user) {
 
         <div class="section">
           <div class="section-title">
-            <h3 id="titulo-datas">Datas e horários de preferência</h3>
-            <span id="legenda-datas">informe pelo menos 2 das 4 opções, com início e término</span>
+            <h3 id="titulo-datas">Datas disponíveis</h3>
+            <span id="legenda-datas">carregando sugestões de data...</span>
           </div>
-          <div class="date-options" id="date-options">${renderDateOptionsHTML()}</div>
+          <div class="date-options" id="date-options"><div class="loading-state">Carregando datas disponíveis...</div></div>
           <div class="advance-note">
             ⚠️ Antecedência mínima de 7 dias a partir de hoje. Datas fora do prazo não podem ser enviadas.
           </div>
@@ -177,7 +181,19 @@ export function renderFormWorkshop(container, navigate, user) {
   `;
 
   container.querySelector('#btn-voltar').addEventListener('click', () => navigate('#/'));
-  ativarAutoPreenchimentoCep(container, 'workshop');
+  ativarAutoPreenchimentoCep(container, 'workshop', () => atualizarSugestoesUnico());
+
+  let tecnicas = [];
+  async function carregarTecnicas() {
+    const snap = await getDocs(query(collection(db, 'tecnicas'), where('ativo', '==', true)));
+    tecnicas = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }
+
+  // Workshop é sempre presencial — endereço sempre existe, só olhar a cidade.
+  function ehRioClaro() {
+    const cidade = container.querySelector('[data-endereco="workshop-cidade"]')?.value || '';
+    return normalizarTexto(cidade) === normalizarTexto('Rio Claro');
+  }
 
   const campoQualEquipamento = container.querySelector('#campo-qual-equipamento');
   const equipamento = criarPillGroup(container, 'grupo-equipamento', 'sim', (valor) => {
@@ -195,6 +211,7 @@ export function renderFormWorkshop(container, navigate, user) {
   const tituloDatas = container.querySelector('#titulo-datas');
   const legendaDatas = container.querySelector('#legenda-datas');
   let tipoReserva = 'unico';
+  let datasSugeridasAtuais = [];
 
   function renderizarBlocoDatas() {
     if (tipoReserva === 'periodo') {
@@ -203,10 +220,52 @@ export function renderFormWorkshop(container, navigate, user) {
       dateOptionsEl.innerHTML = renderPeriodoOptionsHTML();
       ativarSincroniaPeriodo(dateOptionsEl);
     } else {
-      tituloDatas.textContent = 'Datas e horários de preferência';
-      legendaDatas.textContent = 'informe pelo menos 2 das 4 opções, com início e término';
-      dateOptionsEl.innerHTML = renderDateOptionsHTML();
+      tituloDatas.textContent = 'Datas disponíveis';
+      atualizarSugestoesUnico();
     }
+  }
+
+  // Busca no worker os dias em que alguma técnica já está livre de verdade —
+  // pra Rio Claro, prioriza só a agenda da Vithoria (Julia ainda pode
+  // atribuir outra técnica na aprovação, isso só muda a SUGESTÃO de data);
+  // pros demais casos, olha todas as técnicas ativas.
+  async function atualizarSugestoesUnico() {
+    if (tipoReserva !== 'unico') return;
+    const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
+
+    dateOptionsEl.innerHTML = `<div class="loading-state">Carregando datas disponíveis...</div>`;
+    legendaDatas.textContent = 'carregando sugestões de data...';
+
+    if (!calendarWorkerUrl || tecnicas.length === 0) {
+      datasSugeridasAtuais = [];
+      dateOptionsEl.innerHTML = `<div class="empty-state">Não foi possível carregar as datas disponíveis agora. Tente novamente em instantes.</div>`;
+      return;
+    }
+
+    const vithoria = tecnicas.find((t) => t.email === VITHORIA_EMAIL);
+    const usarSoVithoria = ehRioClaro() && Boolean(vithoria);
+    const tecnicaIds = usarSoVithoria ? [vithoria.id] : tecnicas.map((t) => t.id);
+
+    try {
+      const resp = await fetch(`${calendarWorkerUrl}/sugerir-datas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tecnicaIds, diasMinimos: 7, quantidade: 4 })
+      });
+      const resultado = await resp.json();
+      datasSugeridasAtuais = resp.ok ? resultado.datas || [] : [];
+    } catch (err) {
+      console.error('Falha ao buscar datas sugeridas:', err);
+      datasSugeridasAtuais = [];
+    }
+
+    if (tipoReserva !== 'unico') return;
+
+    const minimo = Math.min(2, datasSugeridasAtuais.length);
+    legendaDatas.textContent =
+      datasSugeridasAtuais.length > 0 ? `selecione pelo menos ${minimo} das opções abaixo e informe o horário` : '';
+    dateOptionsEl.innerHTML = renderDateOptionsSugeridasHTML(datasSugeridasAtuais);
+    ativarSelecaoSugerida(dateOptionsEl);
   }
 
   criarPillGroup(container, 'grupo-tipo-reserva', 'unico', (valor) => {
@@ -215,20 +274,31 @@ export function renderFormWorkshop(container, navigate, user) {
   });
 
   // Feedback assim que o vendedor repete uma data/horário — não precisa
-  // esperar o submit pra descobrir.
+  // esperar o submit pra descobrir. Único agora usa dias já sugeridos pelo
+  // sistema (nunca colidem entre si por construção), então a checagem de
+  // duplicata só faz sentido pro período.
   dateOptionsEl.addEventListener('input', () => {
-    const opcoesData = tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : coletarDateOptions(dateOptionsEl);
-    const duplicadas = tipoReserva === 'periodo' ? opcoesPeriodoDuplicadas(opcoesData) : opcoesUnicoDuplicadas(opcoesData);
+    if (tipoReserva !== 'periodo') return;
+    const opcoesData = coletarPeriodoOptions(dateOptionsEl);
+    const duplicadas = opcoesPeriodoDuplicadas(opcoesData);
     destacarOpcoesInvalidas(dateOptionsEl, duplicadas);
     errorBox.innerHTML =
       duplicadas.length > 0 ? `<div class="error-note">As datas e horários das opções precisam ser diferentes entre si.</div>` : '';
   });
 
+  carregarTecnicas().then(() => atualizarSugestoesUnico());
+
   container.querySelector('#form-workshop').addEventListener('submit', async (e) => {
     e.preventDefault();
     errorBox.innerHTML = '';
 
-    const opcoesData = tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : coletarDateOptions(dateOptionsEl);
+    if (tipoReserva === 'unico' && datasSugeridasAtuais.length === 0) {
+      errorBox.innerHTML = `<div class="error-note">Não há datas disponíveis no momento. Tente novamente mais tarde ou fale com a Julia.</div>`;
+      return;
+    }
+
+    const opcoesData =
+      tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : coletarDateOptionsSugeridas(dateOptionsEl, datasSugeridasAtuais);
 
     if (tipoReserva === 'periodo') {
       const ordemInvalida = opcoesPeriodoComOrdemInvalida(opcoesData);
@@ -237,22 +307,30 @@ export function renderFormWorkshop(container, navigate, user) {
         errorBox.innerHTML = `<div class="error-note">A data término não pode ser antes da data início. Corrija a(s) opção(ões) destacada(s).</div>`;
         return;
       }
+
+      const duplicadas = opcoesPeriodoDuplicadas(opcoesData);
+      if (duplicadas.length > 0) {
+        destacarOpcoesInvalidas(dateOptionsEl, duplicadas);
+        errorBox.innerHTML = `<div class="error-note">As datas e horários das opções precisam ser diferentes entre si.</div>`;
+        return;
+      }
+    } else {
+      const incompletas = opcoesSugeridasIncompletas(dateOptionsEl, datasSugeridasAtuais);
+      if (incompletas.length > 0) {
+        destacarOpcoesInvalidas(dateOptionsEl, incompletas);
+        errorBox.innerHTML = `<div class="error-note">Preencha o horário de início e término das datas marcadas.</div>`;
+        return;
+      }
     }
 
-    const duplicadas = tipoReserva === 'periodo' ? opcoesPeriodoDuplicadas(opcoesData) : opcoesUnicoDuplicadas(opcoesData);
-    if (duplicadas.length > 0) {
-      destacarOpcoesInvalidas(dateOptionsEl, duplicadas);
-      errorBox.innerHTML = `<div class="error-note">As datas e horários das opções precisam ser diferentes entre si.</div>`;
-      return;
-    }
-
-    const opcoesValidas = tipoReserva === 'periodo' ? periodoOptionsValidas(opcoesData) : dateOptionsValidas(opcoesData);
+    const minimoUnico = Math.min(2, datasSugeridasAtuais.length);
+    const opcoesValidas = tipoReserva === 'periodo' ? periodoOptionsValidas(opcoesData) : dateOptionsValidas(opcoesData, minimoUnico);
     if (!opcoesValidas) {
       destacarOpcoesInvalidas(dateOptionsEl, []);
       errorBox.innerHTML =
         tipoReserva === 'periodo'
           ? `<div class="error-note">Preencha pelo menos 1 das 2 opções de período (data início, data término e horários).</div>`
-          : `<div class="error-note">Preencha pelo menos 2 das 4 opções de data com início e término.</div>`;
+          : `<div class="error-note">Selecione pelo menos ${minimoUnico} das datas sugeridas e informe o horário.</div>`;
       return;
     }
 

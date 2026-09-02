@@ -335,12 +335,32 @@ export function renderPainelJulia(container) {
           ${renderConteudoPorTipo(item)}
           ${renderEscolhaData(item)}
           <div class="subhead">Atribuir técnica</div>
+          ${(() => {
+            // Uma vez que já sabemos quem está livre naquele horário, só
+            // mostra quem está livre — não faz sentido oferecer alguém que
+            // vai bater conflito/folga. A técnica JÁ selecionada nunca some
+            // da lista (mesmo se ficar indisponível depois), senão o select
+            // "perderia" a seleção sem avisar — o aviso de indisponível
+            // continua aparecendo do jeito que já aparecia.
+            const podeFiltrar = idxRelevante !== null && !aindaVerificando;
+            const tecnicasParaMostrar = podeFiltrar
+              ? tecnicas.filter((t) => {
+                  const status = estado.conflitos?.[t.id]?.[idxRelevante];
+                  return (!status?.conflito && !status?.folga) || t.id === estado.tecnicaId;
+                })
+              : tecnicas;
+
+            if (podeFiltrar && tecnicasParaMostrar.length === 0) {
+              return `<div class="error-note">Nenhuma técnica livre nesse horário. Escolha outra data.</div>`;
+            }
+
+            return `
           <div class="assign-row">
             <div class="field">
               <label>Técnica responsável</label>
               <select data-select-tecnica="${item._id}">
                 <option value="">Selecione...</option>
-                ${tecnicas
+                ${tecnicasParaMostrar
                   .map((t) => {
                     const status = idxRelevante !== null ? estado.conflitos?.[t.id]?.[idxRelevante] : null;
                     const tag = status?.folga ? ' 😴 folga' : status?.conflito ? ' ⚠️ conflito' : '';
@@ -350,6 +370,8 @@ export function renderPainelJulia(container) {
               </select>
             </div>
           </div>
+          `;
+          })()}
           ${
             aindaVerificando
               ? `<div class="checking-note">🔄 Verificando disponibilidade das técnicas na agenda...</div>`
