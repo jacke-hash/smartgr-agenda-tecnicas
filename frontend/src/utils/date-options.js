@@ -112,12 +112,31 @@ export function renderDateOptionsSugeridasHTML(datasDisponiveis) {
 // Destaque visual de "marcada" (borda azul) — reflete o estado do checkbox
 // na hora, sem esperar re-render nenhum. Também liga as setas de paginação,
 // se existirem (janela com só 1 página não mostra pager nenhum).
+//
+// Limite de 4 marcadas: firestore.rules (todasOpcoesUnicoOk) exige um array
+// de EXATAMENTE 4 opções pro modo único (mínimo 2 preenchidas) — contrato
+// antigo de "4 opções digitadas" que a sugestão de datas preserva. Com a
+// janela de 2 meses podendo trazer dezenas de dias disponíveis, sem esse
+// teto a pessoa marcaria mais de 4 e o array final não bateria com a regra
+// (erro de permissão ao salvar). Passado o teto, as caixinhas não marcadas
+// ficam desabilitadas até alguma ser desmarcada.
 export function ativarSelecaoSugerida(container) {
-  container.querySelectorAll('.date-sugerida-check').forEach((check) => {
+  const checks = [...container.querySelectorAll('.date-sugerida-check')];
+
+  function atualizarLimite() {
+    const marcadas = checks.filter((c) => c.checked).length;
+    checks.forEach((c) => {
+      c.disabled = !c.checked && marcadas >= 4;
+    });
+  }
+
+  checks.forEach((check) => {
     check.addEventListener('change', () => {
       check.closest('.date-option.sugerida')?.classList.toggle('selecionada', check.checked);
+      atualizarLimite();
     });
   });
+  atualizarLimite();
 
   const btnPrev = container.querySelector('[data-pager="prev"]');
   const btnNext = container.querySelector('[data-pager="next"]');
@@ -149,20 +168,25 @@ export function ativarSelecaoSugerida(container) {
   });
 }
 
-// Só monta {data, horaInicio, horaTermino} pras opções com a caixinha
-// marcada — as demais ficam vazias (mesmo tratamento de "opção não
-// oferecida" que o modo digitado já tinha).
+// Monta {data, horaInicio, horaTermino} só das opções com a caixinha
+// marcada (na ordem em que aparecem, não importa a página), e sempre
+// devolve um array de tamanho 4 — completando com opções vazias no final.
+// firestore.rules (todasOpcoesUnicoOk) exige exatamente 4 posições pro modo
+// único; ativarSelecaoSugerida já trava a marcação em no máximo 4, então o
+// slice(0,4) aqui é só uma segunda trava, nunca deveria cortar nada de fato.
 export function coletarDateOptionsSugeridas(container, datasDisponiveis) {
-  return datasDisponiveis.map((dataISO, idx) => {
+  const marcadas = [];
+  datasDisponiveis.forEach((dataISO, idx) => {
     const label = container.querySelector(`.date-option.sugerida[data-idx="${idx}"]`);
-    const marcada = label?.querySelector('.date-sugerida-check')?.checked;
-    if (!marcada) return { data: '', horaInicio: '', horaTermino: '' };
-    return {
+    if (!label?.querySelector('.date-sugerida-check')?.checked) return;
+    marcadas.push({
       data: dataISO,
       horaInicio: label.querySelector('[data-field="horaInicio"]')?.value || '',
       horaTermino: label.querySelector('[data-field="horaTermino"]')?.value || ''
-    };
+    });
   });
+  while (marcadas.length < 4) marcadas.push({ data: '', horaInicio: '', horaTermino: '' });
+  return marcadas.slice(0, 4);
 }
 
 // Caixa marcada mas sem horário preenchido — a pessoa claramente quis

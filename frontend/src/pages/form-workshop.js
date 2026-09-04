@@ -263,7 +263,7 @@ export function renderFormWorkshop(container, navigate, user) {
 
     const minimo = Math.min(2, datasSugeridasAtuais.length);
     legendaDatas.textContent =
-      datasSugeridasAtuais.length > 0 ? `selecione pelo menos ${minimo} das opções abaixo e informe o horário` : '';
+      datasSugeridasAtuais.length > 0 ? `selecione de ${minimo} a 4 das opções abaixo e informe o horário` : '';
     dateOptionsEl.innerHTML = renderDateOptionsSugeridasHTML(datasSugeridasAtuais);
     ativarSelecaoSugerida(dateOptionsEl);
   }
