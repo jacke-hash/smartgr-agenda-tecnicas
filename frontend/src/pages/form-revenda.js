@@ -20,8 +20,10 @@ import {
 import { renderEnderecoHTML, coletarEndereco, ativarAutoPreenchimentoCep } from '../utils/endereco.js';
 import { normalizarTexto } from '../utils/texto.js';
 import { notificarNovaSolicitacao } from '../utils/notificar.js';
+import { salvarRascunho, carregarRascunho, limparRascunho, clicarPill, preencherCampos, preencherEndereco } from '../utils/rascunho.js';
 
 const VITHORIA_EMAIL = 'vithoria@smartgr.com.br';
+const RASCUNHO_KEY = 'rascunho-revenda';
 
 function criarPillGroup(container, id, valorInicial, aoMudar) {
   const el = container.querySelector(`#${id}`);
@@ -39,6 +41,7 @@ function criarPillGroup(container, id, valorInicial, aoMudar) {
 }
 
 export function renderFormRevenda(container, navigate, user) {
+  const rascunho = carregarRascunho(RASCUNHO_KEY);
   container.innerHTML = `
     <button class="back-link" id="btn-voltar">← Voltar</button>
     <div class="page-head">
@@ -265,22 +268,26 @@ export function renderFormRevenda(container, navigate, user) {
 
   container.querySelector('#btn-voltar').addEventListener('click', () => navigate('#/'));
 
-  const linhaCompleta = criarPillGroup(container, 'grupo-linha-completa', 'sim', () => {});
-  const tecnicaPropria = criarPillGroup(container, 'grupo-tecnica-propria', 'sim', () => {});
-  const espacoPratica = criarPillGroup(container, 'grupo-espaco-pratica', 'sim', () => {});
-  const tipoPratica = criarPillGroup(container, 'grupo-tipo-pratica', 'assistida', () => {});
-  const quemPaga = criarPillGroup(container, 'grupo-quem-paga', 'smart', () => {});
+  const linhaCompleta = criarPillGroup(container, 'grupo-linha-completa', 'sim', () => salvarProgresso());
+  const tecnicaPropria = criarPillGroup(container, 'grupo-tecnica-propria', 'sim', () => salvarProgresso());
+  const espacoPratica = criarPillGroup(container, 'grupo-espaco-pratica', 'sim', () => salvarProgresso());
+  const tipoPratica = criarPillGroup(container, 'grupo-tipo-pratica', 'assistida', () => salvarProgresso());
+  const quemPaga = criarPillGroup(container, 'grupo-quem-paga', 'smart', () => salvarProgresso());
 
   const campoCapacidade = container.querySelector('#campo-capacidade');
   const salaCursos = criarPillGroup(container, 'grupo-sala-cursos', 'sim', (valor) => {
     campoCapacidade.style.display = valor === 'sim' ? 'flex' : 'none';
+    salvarProgresso();
   });
 
   const blocoEndereco = container.querySelector('#bloco-endereco');
   // Snapshot antes de qualquer toggle — só esses campos devem voltar a ser
   // `required` quando o bloco reaparece (complemento é opcional, fica de fora).
   const camposObrigatoriosEndereco = Array.from(blocoEndereco.querySelectorAll('[required]'));
-  ativarAutoPreenchimentoCep(container, 'revenda', () => atualizarSugestoesUnico());
+  ativarAutoPreenchimentoCep(container, 'revenda', () => {
+    atualizarSugestoesUnico();
+    salvarProgresso();
+  });
   const modalidade = criarPillGroup(container, 'grupo-modalidade', 'presencial', (valor) => {
     blocoEndereco.style.display = valor === 'presencial' ? 'block' : 'none';
     // Campo required escondido trava o submit nativo em silêncio (Chrome não
@@ -290,6 +297,7 @@ export function renderFormRevenda(container, navigate, user) {
       el.required = valor === 'presencial';
     });
     atualizarSugestoesUnico();
+    salvarProgresso();
   });
 
   let tecnicas = [];
@@ -315,6 +323,7 @@ export function renderFormRevenda(container, navigate, user) {
   const blocoTransporteDetalhe = container.querySelector('#bloco-transporte-detalhe');
   const transporte = criarPillGroup(container, 'grupo-transporte', 'sim', (valor) => {
     blocoTransporteDetalhe.style.display = valor === 'sim' ? 'block' : 'none';
+    salvarProgresso();
   });
 
   // --- Fluxo "Cliente da revenda" — sempre sobre equipamentos, com switch
@@ -404,6 +413,7 @@ export function renderFormRevenda(container, navigate, user) {
     grupoTipoTreinamentoCliente.querySelectorAll('.pill').forEach((p) => p.classList.toggle('selected', p === pill));
     renderCamposClienteDetalhe();
     atualizarSugestoesUnico();
+    salvarProgresso();
   });
 
   const destino = criarPillGroup(container, 'grupo-destino', 'propria_revenda', (valor) => {
@@ -425,6 +435,7 @@ export function renderFormRevenda(container, navigate, user) {
     grupoTipoTreinamentoCliente.querySelectorAll('.pill').forEach((p) => p.classList.remove('selected'));
     camposClienteDetalhe.innerHTML = '';
     atualizarSugestoesUnico();
+    salvarProgresso();
   });
 
   let tipoReserva = 'unico';
@@ -493,6 +504,7 @@ export function renderFormRevenda(container, navigate, user) {
   criarPillGroup(container, 'grupo-tipo-reserva', 'unico', (valor) => {
     tipoReserva = valor;
     renderizarBlocoDatas();
+    salvarProgresso();
   });
 
   // Feedback assim que o vendedor repete uma data/horário — não precisa
@@ -508,7 +520,140 @@ export function renderFormRevenda(container, navigate, user) {
       duplicadas.length > 0 ? `<div class="error-note">As datas e horários das opções precisam ser diferentes entre si.</div>` : '';
   });
 
-  carregarTecnicas().then(() => atualizarSugestoesUnico());
+  // Rascunho no localStorage: sobrevive a um F5/fechar aba sem querer, no
+  // mesmo aparelho. Salva a cada digitação/clique relevante e some assim que
+  // a solicitação é enviada com sucesso. Campos do fluxo "cliente da revenda"
+  // só existem no DOM quando tipoTreinamentoCliente já foi escolhido — o
+  // `?.value` cobre o caso de ainda não existirem.
+  function salvarProgresso() {
+    const clienteRevenda = destino.get() === 'cliente_revenda';
+    const presencialCliente = clienteRevenda && tipoTreinamentoCliente === 'presencial';
+    salvarRascunho(RASCUNHO_KEY, {
+      nomeRevenda: container.querySelector('#nomeRevenda').value,
+      vendedor: container.querySelector('#vendedor').value,
+      destino: destino.get(),
+
+      marcasQueTrabalha: container.querySelector('#marcasQueTrabalha').value,
+      linhaCompleta: linhaCompleta.get(),
+      principalPublico: container.querySelector('#principalPublico').value,
+      tecnicaPropria: tecnicaPropria.get(),
+      salaCursos: salaCursos.get(),
+      capacidadeSala: container.querySelector('#capacidadeSala').value,
+      espacoPratica: espacoPratica.get(),
+      tipoPratica: tipoPratica.get(),
+      modalidade: modalidade.get(),
+      endereco: modalidade.get() === 'presencial' ? coletarEndereco(container, 'revenda') : null,
+      transporte: transporte.get(),
+      quemPaga: quemPaga.get(),
+      meioTransporte: container.querySelector('#meioTransporte').value,
+      tema: container.querySelector('#tema').value,
+
+      tipoTreinamentoCliente,
+      nomeTreinamentoCliente: clienteRevenda ? container.querySelector('#nomeTreinamentoCliente')?.value : null,
+      observacoesCliente: clienteRevenda ? container.querySelector('#observacoesCliente')?.value : null,
+      equipamentoCliente: clienteRevenda ? container.querySelector('#equipamentoCliente')?.value : null,
+      insumosCliente: clienteRevenda ? container.querySelector('#insumosCliente')?.value : null,
+      enderecoCliente: presencialCliente ? coletarEndereco(container, 'revenda-cliente') : null,
+      transporteCliente: presencialCliente ? container.querySelector('#transporteCliente')?.value : null,
+
+      tipoReserva,
+      opcoesPeriodo: tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : null,
+      datasSelecionadas:
+        tipoReserva === 'unico' ? coletarDateOptionsSugeridas(dateOptionsEl, datasSugeridasAtuais).filter((o) => o.data) : null,
+      copiaThayla: container.querySelector('#copia-thayla').checked
+    });
+  }
+
+  // Campos de texto/select/checkbox nativos disparam input/change sozinhos —
+  // um listener delegado cobre todos de uma vez. Pill (div clicável) não
+  // dispara esses eventos, por isso tem chamada explícita nos handlers acima.
+  container.addEventListener('input', salvarProgresso);
+  container.addEventListener('change', salvarProgresso);
+
+  // Campos simples — tudo que não depende da busca assíncrona de datas
+  // sugeridas. Roda ANTES de carregarTecnicas() pra já restaurar
+  // modalidade/endereço a tempo da primeira busca de sugestão sair com o "é
+  // Rio Claro" certo.
+  function restaurarCamposSimples() {
+    if (!rascunho) return;
+
+    preencherCampos(container, {
+      nomeRevenda: rascunho.nomeRevenda,
+      vendedor: rascunho.vendedor,
+      marcasQueTrabalha: rascunho.marcasQueTrabalha,
+      principalPublico: rascunho.principalPublico,
+      capacidadeSala: rascunho.capacidadeSala,
+      meioTransporte: rascunho.meioTransporte,
+      tema: rascunho.tema
+    });
+
+    clicarPill(container, 'grupo-destino', rascunho.destino);
+
+    if (rascunho.destino === 'cliente_revenda') {
+      clicarPill(container, 'grupo-tipo-treinamento-cliente', rascunho.tipoTreinamentoCliente);
+      // renderCamposClienteDetalhe() já rodou (disparado pelo clique acima) —
+      // os campos abaixo já existem no DOM se tipoTreinamentoCliente foi setado.
+      preencherCampos(container, {
+        nomeTreinamentoCliente: rascunho.nomeTreinamentoCliente,
+        observacoesCliente: rascunho.observacoesCliente,
+        equipamentoCliente: rascunho.equipamentoCliente,
+        insumosCliente: rascunho.insumosCliente,
+        transporteCliente: rascunho.transporteCliente
+      });
+      preencherEndereco(container, 'revenda-cliente', rascunho.enderecoCliente);
+    } else {
+      clicarPill(container, 'grupo-linha-completa', rascunho.linhaCompleta);
+      clicarPill(container, 'grupo-tecnica-propria', rascunho.tecnicaPropria);
+      clicarPill(container, 'grupo-sala-cursos', rascunho.salaCursos);
+      clicarPill(container, 'grupo-espaco-pratica', rascunho.espacoPratica);
+      clicarPill(container, 'grupo-tipo-pratica', rascunho.tipoPratica);
+      clicarPill(container, 'grupo-modalidade', rascunho.modalidade);
+      preencherEndereco(container, 'revenda', rascunho.endereco);
+      clicarPill(container, 'grupo-transporte', rascunho.transporte);
+      clicarPill(container, 'grupo-quem-paga', rascunho.quemPaga);
+    }
+
+    if (rascunho.tipoReserva === 'periodo') {
+      clicarPill(container, 'grupo-tipo-reserva', 'periodo');
+      if (Array.isArray(rascunho.opcoesPeriodo)) {
+        rascunho.opcoesPeriodo.forEach((opcao, idx) => {
+          Object.entries(opcao || {}).forEach(([campo, val]) => {
+            if (!val) return;
+            const el = dateOptionsEl.querySelector(`[data-idx="${idx}"][data-field="${campo}"]`);
+            if (el) el.value = val;
+          });
+        });
+      }
+    }
+
+    const copiaThayla = container.querySelector('#copia-thayla');
+    if (copiaThayla) copiaThayla.checked = Boolean(rascunho.copiaThayla);
+  }
+
+  // Marcação das datas sugeridas: só dá pra restaurar DEPOIS que a busca
+  // assíncrona de sugestões voltar e os cards existirem no DOM. Compara pela
+  // data (string ISO) — se ela não estiver mais na lista (já passou, ou
+  // alguma técnica ocupou a agenda nesse meio tempo), simplesmente ignora.
+  function restaurarSelecaoDatasUnico() {
+    if (!rascunho || tipoReserva !== 'unico' || !Array.isArray(rascunho.datasSelecionadas)) return;
+    rascunho.datasSelecionadas.forEach((sel) => {
+      const idx = datasSugeridasAtuais.indexOf(sel.data);
+      if (idx === -1) return;
+      const label = dateOptionsEl.querySelector(`.date-option.sugerida[data-idx="${idx}"]`);
+      const check = label?.querySelector('.date-sugerida-check');
+      if (!check || check.disabled || check.checked) return;
+      check.checked = true;
+      check.dispatchEvent(new Event('change', { bubbles: true }));
+      if (sel.horaInicio) label.querySelector('[data-field="horaInicio"]').value = sel.horaInicio;
+      if (sel.horaTermino) label.querySelector('[data-field="horaTermino"]').value = sel.horaTermino;
+    });
+  }
+
+  restaurarCamposSimples();
+
+  carregarTecnicas()
+    .then(() => atualizarSugestoesUnico())
+    .then(() => restaurarSelecaoDatasUnico());
 
   container.querySelector('#form-revenda').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -648,6 +793,7 @@ export function renderFormRevenda(container, navigate, user) {
         { copiaThayla: container.querySelector('#copia-thayla').checked }
       );
 
+      limparRascunho(RASCUNHO_KEY);
       container.querySelector('.form-grid').innerHTML = `
         <div class="success-note">✓ Solicitação enviada com sucesso. A Julia vai revisar em até 24h.</div>
       `;

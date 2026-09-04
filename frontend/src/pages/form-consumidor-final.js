@@ -20,11 +20,14 @@ import {
 import { renderEnderecoHTML, coletarEndereco, ativarAutoPreenchimentoCep } from '../utils/endereco.js';
 import { normalizarTexto } from '../utils/texto.js';
 import { notificarNovaSolicitacao } from '../utils/notificar.js';
+import { salvarRascunho, carregarRascunho, limparRascunho, clicarPill, preencherCampos, preencherEndereco } from '../utils/rascunho.js';
 
 const UNIDADES = ['Zona Sul', 'Zona Leste', 'Rio Claro', 'Recife', 'Porto Alegre'];
 const VITHORIA_EMAIL = 'vithoria@smartgr.com.br';
+const RASCUNHO_KEY = 'rascunho-consumidor-final';
 
 export function renderFormConsumidorFinal(container, navigate, user) {
+  const rascunho = carregarRascunho(RASCUNHO_KEY);
   let participantes = [{ nome: '', profissao: '' }];
   let modalidade = 'presencial';
   let tipoTreinamento = 'interno';
@@ -215,6 +218,7 @@ export function renderFormConsumidorFinal(container, navigate, user) {
         if (participantes.length <= 1) return;
         participantes.splice(Number(btn.dataset.remove), 1);
         renderParticipantes();
+        salvarProgresso();
       });
     });
   }
@@ -224,6 +228,7 @@ export function renderFormConsumidorFinal(container, navigate, user) {
   container.querySelector('#btn-add-participant').addEventListener('click', () => {
     participantes.push({ nome: '', profissao: '' });
     renderParticipantes();
+    salvarProgresso();
   });
 
   const grupoModalidade = container.querySelector('#grupo-modalidade');
@@ -234,7 +239,10 @@ export function renderFormConsumidorFinal(container, navigate, user) {
   // voltar a ser `required` quando o bloco reaparece; o complemento (opcional)
   // nunca entra aqui.
   const camposObrigatoriosExterno = Array.from(blocoExterno.querySelectorAll('[required]'));
-  ativarAutoPreenchimentoCep(container, 'final', () => atualizarSugestoesUnico());
+  ativarAutoPreenchimentoCep(container, 'final', () => {
+    atualizarSugestoesUnico();
+    salvarProgresso();
+  });
 
   async function carregarTecnicas() {
     const snap = await getDocs(query(collection(db, 'tecnicas'), where('ativo', '==', true)));
@@ -281,6 +289,7 @@ export function renderFormConsumidorFinal(container, navigate, user) {
     modalidade = pill.dataset.val;
     if (modalidade === 'online') tipoTreinamento = 'interno';
     aplicarTrava();
+    salvarProgresso();
   });
 
   grupoTipo.addEventListener('click', (e) => {
@@ -292,6 +301,7 @@ export function renderFormConsumidorFinal(container, navigate, user) {
     // Interno usa unidade, externo usa cidade do endereço — a fonte de "é
     // Rio Claro" muda, então reconsulta.
     atualizarSugestoesUnico();
+    salvarProgresso();
   });
 
   container.querySelector('#unidade').addEventListener('change', () => atualizarSugestoesUnico());
@@ -368,6 +378,7 @@ export function renderFormConsumidorFinal(container, navigate, user) {
     tipoReserva = pill.dataset.val;
     grupoTipoReserva.querySelectorAll('.pill').forEach((p) => p.classList.toggle('selected', p === pill));
     renderizarBlocoDatas();
+    salvarProgresso();
   });
 
   // Feedback assim que o vendedor repete uma data/horário — não precisa
@@ -386,7 +397,106 @@ export function renderFormConsumidorFinal(container, navigate, user) {
       duplicadas.length > 0 ? `<div class="error-note">As datas e horários das opções precisam ser diferentes entre si.</div>` : '';
   });
 
-  carregarTecnicas().then(() => atualizarSugestoesUnico());
+  // Rascunho no localStorage: sobrevive a um F5/fechar aba sem querer, no
+  // mesmo aparelho. Salva a cada digitação/clique relevante e some assim que
+  // a solicitação é enviada com sucesso.
+  function salvarProgresso() {
+    salvarRascunho(RASCUNHO_KEY, {
+      vendedor: container.querySelector('#vendedor').value,
+      perfilProfissional: container.querySelector('#perfilProfissional').value,
+      contato: container.querySelector('#contato').value,
+      participantes,
+      equipamentoComprado: container.querySelector('#equipamentoComprado').value,
+      numeroSerie: container.querySelector('#numeroSerie').value,
+      insumosAdquiridos: container.querySelector('#insumosAdquiridos').value,
+      observacao: container.querySelector('#observacao').value,
+      modalidade,
+      tipoTreinamento,
+      unidade: container.querySelector('#unidade').value,
+      endereco: tipoTreinamento === 'externo' ? coletarEndereco(container, 'final') : null,
+      tipoReserva,
+      opcoesPeriodo: tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : null,
+      datasSelecionadas:
+        tipoReserva === 'unico' ? coletarDateOptionsSugeridas(dateOptionsEl, datasSugeridasAtuais).filter((o) => o.data) : null,
+      copiaThayla: container.querySelector('#copia-thayla').checked
+    });
+  }
+
+  // Campos de texto/select/checkbox nativos disparam input/change sozinhos —
+  // um listener delegado cobre todos de uma vez. Pill (div clicável) e
+  // adicionar/remover participante não disparam esses eventos, por isso têm
+  // chamada explícita de salvarProgresso() nos próprios handlers acima.
+  container.addEventListener('input', salvarProgresso);
+  container.addEventListener('change', salvarProgresso);
+
+  // Campos simples (texto, pills, endereço, período) — tudo que não depende
+  // da busca assíncrona de datas sugeridas. Roda ANTES de carregarTecnicas()
+  // pra já restaurar modalidade/tipoTreinamento/endereço a tempo da primeira
+  // busca de sugestão sair com o "é Rio Claro" certo.
+  function restaurarCamposSimples() {
+    if (!rascunho) return;
+
+    preencherCampos(container, {
+      vendedor: rascunho.vendedor,
+      perfilProfissional: rascunho.perfilProfissional,
+      contato: rascunho.contato,
+      equipamentoComprado: rascunho.equipamentoComprado,
+      numeroSerie: rascunho.numeroSerie,
+      insumosAdquiridos: rascunho.insumosAdquiridos,
+      observacao: rascunho.observacao,
+      unidade: rascunho.unidade
+    });
+
+    if (Array.isArray(rascunho.participantes) && rascunho.participantes.length > 0) {
+      participantes = rascunho.participantes;
+      renderParticipantes();
+    }
+
+    clicarPill(container, 'grupo-tipo', rascunho.tipoTreinamento);
+    clicarPill(container, 'grupo-modalidade', rascunho.modalidade);
+    preencherEndereco(container, 'final', rascunho.endereco);
+
+    if (rascunho.tipoReserva === 'periodo') {
+      clicarPill(container, 'grupo-tipo-reserva', 'periodo');
+      if (Array.isArray(rascunho.opcoesPeriodo)) {
+        rascunho.opcoesPeriodo.forEach((opcao, idx) => {
+          Object.entries(opcao || {}).forEach(([campo, val]) => {
+            if (!val) return;
+            const el = dateOptionsEl.querySelector(`[data-idx="${idx}"][data-field="${campo}"]`);
+            if (el) el.value = val;
+          });
+        });
+      }
+    }
+
+    const copiaThayla = container.querySelector('#copia-thayla');
+    if (copiaThayla) copiaThayla.checked = Boolean(rascunho.copiaThayla);
+  }
+
+  // Marcação das datas sugeridas: só dá pra restaurar DEPOIS que a busca
+  // assíncrona de sugestões voltar e os cards existirem no DOM. Compara pela
+  // data (string ISO) — se aquela data não estiver mais na lista (já passou,
+  // ou alguma técnica ocupou a agenda nesse meio tempo), simplesmente ignora.
+  function restaurarSelecaoDatasUnico() {
+    if (!rascunho || tipoReserva !== 'unico' || !Array.isArray(rascunho.datasSelecionadas)) return;
+    rascunho.datasSelecionadas.forEach((sel) => {
+      const idx = datasSugeridasAtuais.indexOf(sel.data);
+      if (idx === -1) return;
+      const label = dateOptionsEl.querySelector(`.date-option.sugerida[data-idx="${idx}"]`);
+      const check = label?.querySelector('.date-sugerida-check');
+      if (!check || check.disabled || check.checked) return;
+      check.checked = true;
+      check.dispatchEvent(new Event('change', { bubbles: true }));
+      if (sel.horaInicio) label.querySelector('[data-field="horaInicio"]').value = sel.horaInicio;
+      if (sel.horaTermino) label.querySelector('[data-field="horaTermino"]').value = sel.horaTermino;
+    });
+  }
+
+  restaurarCamposSimples();
+
+  carregarTecnicas()
+    .then(() => atualizarSugestoesUnico())
+    .then(() => restaurarSelecaoDatasUnico());
 
   container.querySelector('#form-final').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -493,6 +603,7 @@ export function renderFormConsumidorFinal(container, navigate, user) {
         { copiaThayla: container.querySelector('#copia-thayla').checked }
       );
 
+      limparRascunho(RASCUNHO_KEY);
       container.querySelector('.form-grid').innerHTML = `
         <div class="success-note">✓ Solicitação enviada com sucesso. A Julia vai revisar em até 24h.</div>
       `;

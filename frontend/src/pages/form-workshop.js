@@ -20,8 +20,10 @@ import {
   opcoesPeriodoDuplicadas
 } from '../utils/date-options.js';
 import { notificarNovaSolicitacao } from '../utils/notificar.js';
+import { salvarRascunho, carregarRascunho, limparRascunho, clicarPill, preencherCampos, preencherEndereco } from '../utils/rascunho.js';
 
 const VITHORIA_EMAIL = 'vithoria@smartgr.com.br';
+const RASCUNHO_KEY = 'rascunho-workshop';
 
 function criarPillGroup(container, id, valorInicial, aoMudar) {
   const el = container.querySelector(`#${id}`);
@@ -37,6 +39,7 @@ function criarPillGroup(container, id, valorInicial, aoMudar) {
 }
 
 export function renderFormWorkshop(container, navigate, user) {
+  const rascunho = carregarRascunho(RASCUNHO_KEY);
   container.innerHTML = `
     <button class="back-link" id="btn-voltar">← Voltar</button>
     <div class="page-head">
@@ -181,7 +184,10 @@ export function renderFormWorkshop(container, navigate, user) {
   `;
 
   container.querySelector('#btn-voltar').addEventListener('click', () => navigate('#/'));
-  ativarAutoPreenchimentoCep(container, 'workshop', () => atualizarSugestoesUnico());
+  ativarAutoPreenchimentoCep(container, 'workshop', () => {
+    atualizarSugestoesUnico();
+    salvarProgresso();
+  });
 
   let tecnicas = [];
   async function carregarTecnicas() {
@@ -271,6 +277,7 @@ export function renderFormWorkshop(container, navigate, user) {
   criarPillGroup(container, 'grupo-tipo-reserva', 'unico', (valor) => {
     tipoReserva = valor;
     renderizarBlocoDatas();
+    salvarProgresso();
   });
 
   // Feedback assim que o vendedor repete uma data/horário — não precisa
@@ -286,7 +293,102 @@ export function renderFormWorkshop(container, navigate, user) {
       duplicadas.length > 0 ? `<div class="error-note">As datas e horários das opções precisam ser diferentes entre si.</div>` : '';
   });
 
-  carregarTecnicas().then(() => atualizarSugestoesUnico());
+  // Rascunho no localStorage: sobrevive a um F5/fechar aba sem querer, no
+  // mesmo aparelho. Salva a cada digitação/clique relevante e some assim que
+  // a solicitação é enviada com sucesso.
+  function salvarProgresso() {
+    salvarRascunho(RASCUNHO_KEY, {
+      localInstituicao: container.querySelector('#localInstituicao').value,
+      vendedorAcompanha: container.querySelector('#vendedorAcompanha').value,
+      endereco: coletarEndereco(container, 'workshop'),
+      responsavelNome: container.querySelector('#responsavelNome').value,
+      responsavelContato: container.querySelector('#responsavelContato').value,
+      tema: container.querySelector('#tema').value,
+      publico: container.querySelector('#publico').value,
+      participantesEstimados: container.querySelector('#participantesEstimados').value,
+      demo: demo.get(),
+      equipamento: equipamento.get(),
+      qualEquipamento: container.querySelector('#qualEquipamento').value,
+      materialApoio: container.querySelector('#materialApoio').value,
+      observacoes: container.querySelector('#observacoes').value,
+      tipoReserva,
+      opcoesPeriodo: tipoReserva === 'periodo' ? coletarPeriodoOptions(dateOptionsEl) : null,
+      datasSelecionadas:
+        tipoReserva === 'unico' ? coletarDateOptionsSugeridas(dateOptionsEl, datasSugeridasAtuais).filter((o) => o.data) : null,
+      copiaThayla: container.querySelector('#copia-thayla').checked
+    });
+  }
+
+  // Campos de texto/select/checkbox nativos disparam input/change sozinhos —
+  // um listener delegado cobre todos de uma vez. Pill (div clicável) não
+  // dispara esses eventos, por isso tem chamada explícita nos handlers acima.
+  container.addEventListener('input', salvarProgresso);
+  container.addEventListener('change', salvarProgresso);
+
+  // Campos simples — tudo que não depende da busca assíncrona de datas
+  // sugeridas. Roda ANTES de carregarTecnicas() pra já restaurar o endereço a
+  // tempo da primeira busca de sugestão sair com o "é Rio Claro" certo.
+  function restaurarCamposSimples() {
+    if (!rascunho) return;
+
+    preencherCampos(container, {
+      localInstituicao: rascunho.localInstituicao,
+      vendedorAcompanha: rascunho.vendedorAcompanha,
+      responsavelNome: rascunho.responsavelNome,
+      responsavelContato: rascunho.responsavelContato,
+      tema: rascunho.tema,
+      publico: rascunho.publico,
+      participantesEstimados: rascunho.participantesEstimados,
+      qualEquipamento: rascunho.qualEquipamento,
+      materialApoio: rascunho.materialApoio,
+      observacoes: rascunho.observacoes
+    });
+    preencherEndereco(container, 'workshop', rascunho.endereco);
+
+    clicarPill(container, 'grupo-demo', rascunho.demo);
+    clicarPill(container, 'grupo-equipamento', rascunho.equipamento);
+
+    if (rascunho.tipoReserva === 'periodo') {
+      clicarPill(container, 'grupo-tipo-reserva', 'periodo');
+      if (Array.isArray(rascunho.opcoesPeriodo)) {
+        rascunho.opcoesPeriodo.forEach((opcao, idx) => {
+          Object.entries(opcao || {}).forEach(([campo, val]) => {
+            if (!val) return;
+            const el = dateOptionsEl.querySelector(`[data-idx="${idx}"][data-field="${campo}"]`);
+            if (el) el.value = val;
+          });
+        });
+      }
+    }
+
+    const copiaThayla = container.querySelector('#copia-thayla');
+    if (copiaThayla) copiaThayla.checked = Boolean(rascunho.copiaThayla);
+  }
+
+  // Marcação das datas sugeridas: só dá pra restaurar DEPOIS que a busca
+  // assíncrona de sugestões voltar e os cards existirem no DOM. Compara pela
+  // data (string ISO) — se ela não estiver mais na lista (já passou, ou
+  // alguma técnica ocupou a agenda nesse meio tempo), simplesmente ignora.
+  function restaurarSelecaoDatasUnico() {
+    if (!rascunho || tipoReserva !== 'unico' || !Array.isArray(rascunho.datasSelecionadas)) return;
+    rascunho.datasSelecionadas.forEach((sel) => {
+      const idx = datasSugeridasAtuais.indexOf(sel.data);
+      if (idx === -1) return;
+      const label = dateOptionsEl.querySelector(`.date-option.sugerida[data-idx="${idx}"]`);
+      const check = label?.querySelector('.date-sugerida-check');
+      if (!check || check.disabled || check.checked) return;
+      check.checked = true;
+      check.dispatchEvent(new Event('change', { bubbles: true }));
+      if (sel.horaInicio) label.querySelector('[data-field="horaInicio"]').value = sel.horaInicio;
+      if (sel.horaTermino) label.querySelector('[data-field="horaTermino"]').value = sel.horaTermino;
+    });
+  }
+
+  restaurarCamposSimples();
+
+  carregarTecnicas()
+    .then(() => atualizarSugestoesUnico())
+    .then(() => restaurarSelecaoDatasUnico());
 
   container.querySelector('#form-workshop').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -390,6 +492,7 @@ export function renderFormWorkshop(container, navigate, user) {
         { copiaThayla: container.querySelector('#copia-thayla').checked }
       );
 
+      limparRascunho(RASCUNHO_KEY);
       container.querySelector('.form-grid').innerHTML = `
         <div class="success-note">✓ Solicitação enviada com sucesso. A Julia vai revisar em até 24h.</div>
       `;
