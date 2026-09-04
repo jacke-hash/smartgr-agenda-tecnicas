@@ -421,9 +421,181 @@ export function renderPainelJulia(container) {
             <strong>${item.status === 'aprovado' ? 'Aprovada' : 'Recusada'} em:</strong> ${formatDataHora(item.aprovadoEm)}
           </p>
           ${item.status === 'recusado' && item.motivoRecusa ? `<p><strong>Motivo:</strong> ${item.motivoRecusa}</p>` : ''}
+          ${
+            item.status === 'aprovado'
+              ? `
+          <div class="subhead">Trocar técnica</div>
+          <div class="assign-row">
+            <div class="field">
+              <select data-reatribuir-select="${item._id}">
+                ${tecnicas
+                  .map((t) => `<option value="${t.id}" ${t.id === item.tecnicaAtribuida ? 'selected' : ''}>${t.nome}</option>`)
+                  .join('')}
+              </select>
+            </div>
+            <button class="btn btn-approve" data-reatribuir-salvar="${item._id}">Salvar nova técnica</button>
+          </div>
+          <div id="msg-reatribuir-${item._id}"></div>
+          `
+              : ''
+          }
         </div>
       </div>
     `;
+  }
+
+  // Reatribuir depois de já aprovado: some da agenda antiga (best-effort —
+  // se o evento já não existir mais lá, tudo bem) e cria o mesmo evento na
+  // agenda da técnica nova, além de atualizar o doc. Não deixa reatribuir
+  // pra alguém com conflito/folga no horário já escolhido — mesma regra
+  // de disponibilidade usada na aprovação original.
+  async function reatribuirTecnica(item, novoTecnicaId, msgEl, btnEl) {
+    msgEl.innerHTML = '';
+
+    if (!novoTecnicaId) {
+      msgEl.innerHTML = `<div class="error-note">Selecione uma técnica.</div>`;
+      return;
+    }
+    if (novoTecnicaId === item.tecnicaAtribuida) {
+      msgEl.innerHTML = `<div class="error-note">Já é essa a técnica atual.</div>`;
+      return;
+    }
+    if (!item.dataEscolhida) {
+      msgEl.innerHTML = `<div class="error-note">Solicitação sem data escolhida — não é possível reatribuir.</div>`;
+      return;
+    }
+
+    const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
+    const novaTecnica = tecnicas.find((t) => t.id === novoTecnicaId);
+    const tecnicaAntigaId = item.tecnicaAtribuida;
+    const eventIdAntigo = item.googleEventId;
+
+    btnEl.disabled = true;
+    btnEl.textContent = 'Verificando disponibilidade...';
+
+    if (calendarWorkerUrl) {
+      try {
+        const respCheck = await fetch(`${calendarWorkerUrl}/verificar-conflitos`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tecnicaIds: [novoTecnicaId],
+            opcoesData: [item.dataEscolhida],
+            tipoReserva: item.tipoReserva || 'unico',
+            solicitacaoId: item._id
+          })
+        });
+        if (respCheck.ok) {
+          const { conflitos } = await respCheck.json();
+          const status = conflitos?.[novoTecnicaId]?.[0];
+          if (status?.conflito || status?.folga) {
+            const detalhe = status?.eventoConflitante ? ` — ${formatarEventoConflitante(status.eventoConflitante)}` : '';
+            msgEl.innerHTML = `<div class="error-note">${
+              status.folga
+                ? `😴 Técnica está de folga nesse horário (trabalhou no domingo anterior)${detalhe}.`
+                : `⚠️ Técnica tem conflito de agenda nesse horário${detalhe}.`
+            } Escolha outra técnica.</div>`;
+            btnEl.disabled = false;
+            btnEl.textContent = 'Salvar nova técnica';
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('reatribuir: falha ao checar conflito, seguindo mesmo assim:', err.message);
+      }
+    }
+
+    // Campos do formulário original pro corpo do evento — mesmo recorte
+    // usado em aprovar()/evento da Nayra, exclui metadados internos.
+    const revendaCliente = item.tipo === 'revenda' && item.destinoTreinamento === 'cliente_revenda';
+    const modalidade = item.tipo === 'workshop' ? 'presencial' : revendaCliente ? item.tipoTreinamentoCliente : item.modalidade;
+    const endereco = revendaCliente ? item.enderecoCliente || null : item.endereco || null;
+    const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
+    const {
+      _id,
+      _colecao,
+      criadoEm,
+      slaExpiraEm,
+      aprovadoEm,
+      tecnicaAtribuida,
+      status,
+      opcoesData,
+      dataEscolhida,
+      googleEventId,
+      googleEventLink,
+      ...solicitacaoParaEmail
+    } = item;
+
+    if (calendarWorkerUrl && eventIdAntigo && tecnicaAntigaId) {
+      btnEl.textContent = 'Removendo evento antigo...';
+      try {
+        const respExcluir = await fetch(`${calendarWorkerUrl}/escala/excluir-evento`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tecnicaId: tecnicaAntigaId, eventId: eventIdAntigo })
+        });
+        if (!respExcluir.ok) {
+          console.error('reatribuir: falha ao excluir evento antigo, seguindo mesmo assim:', await respExcluir.text());
+        }
+      } catch (err) {
+        console.error('reatribuir: falha ao excluir evento antigo, seguindo mesmo assim:', err.message);
+      }
+    }
+
+    let googleEventIdNovo = null;
+    let googleEventLinkNovo = null;
+    if (calendarWorkerUrl) {
+      btnEl.textContent = 'Criando evento na nova agenda...';
+      try {
+        const respCriar = await fetch(`${calendarWorkerUrl}/criar-evento`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tecnicaId: novoTecnicaId,
+            tipo: item.tipo,
+            tipoTreinamento: item.tipoTreinamento || null,
+            tipoReserva: item.tipoReserva || 'unico',
+            modalidade,
+            endereco,
+            unidade: item.unidade || null,
+            nomeSolicitante,
+            dataHora: item.dataEscolhida,
+            solicitacao: solicitacaoParaEmail
+          })
+        });
+        const resultadoCriar = await respCriar.json();
+        if (respCriar.ok) {
+          googleEventIdNovo = resultadoCriar.eventId;
+          googleEventLinkNovo = resultadoCriar.htmlLink;
+        } else {
+          msgEl.innerHTML = `<div class="error-note">Falha ao criar evento na agenda da nova técnica: ${resultadoCriar.message || 'erro desconhecido'}. Reatribuição cancelada.</div>`;
+          btnEl.disabled = false;
+          btnEl.textContent = 'Salvar nova técnica';
+          return;
+        }
+      } catch (err) {
+        msgEl.innerHTML = `<div class="error-note">Falha ao criar evento na agenda da nova técnica: ${err.message}. Reatribuição cancelada.</div>`;
+        btnEl.disabled = false;
+        btnEl.textContent = 'Salvar nova técnica';
+        return;
+      }
+    }
+
+    await updateDoc(doc(db, item._colecao, item._id), {
+      tecnicaAtribuida: novoTecnicaId,
+      tecnicaEmail: novaTecnica?.email || null,
+      googleEventId: googleEventIdNovo,
+      googleEventLink: googleEventLinkNovo
+    });
+
+    item.tecnicaAtribuida = novoTecnicaId;
+    item.tecnicaEmail = novaTecnica?.email || null;
+    item.googleEventId = googleEventIdNovo;
+    item.googleEventLink = googleEventLinkNovo;
+
+    msgEl.innerHTML = `<div class="success-note">Reatribuído para ${novaTecnica?.nome || 'nova técnica'} com sucesso.</div>`;
+    btnEl.disabled = false;
+    btnEl.textContent = 'Salvar nova técnica';
   }
 
   async function carregarHistorico(status) {
@@ -642,6 +814,14 @@ export function renderPainelJulia(container) {
         itens.length === 0
           ? `<div class="empty-state">Nenhuma solicitação ${abaAtiva === 'aprovado' ? 'aprovada' : 'recusada'} ainda.</div>`
           : itens.map((item) => renderCardHistorico(item)).join('');
+
+      queueEl.querySelectorAll('[data-reatribuir-salvar]').forEach((btn) => {
+        const itemId = btn.dataset.reatribuirSalvar;
+        const item = itens.find((i) => i._id === itemId);
+        const select = queueEl.querySelector(`[data-reatribuir-select="${itemId}"]`);
+        const msgEl = queueEl.querySelector(`#msg-reatribuir-${itemId}`);
+        btn.addEventListener('click', () => reatribuirTecnica(item, select.value, msgEl, btn));
+      });
       return;
     }
 
@@ -697,7 +877,12 @@ export function renderPainelJulia(container) {
       unsubscribes.push(unsub);
     });
 
-    intervaloCountdown = setInterval(renderFila, 30000);
+    // Só re-renderiza sozinho na aba "Pendentes" (countdown de SLA) — nas
+    // outras abas isso apagaria o formulário de reatribuir técnica no meio
+    // de uma edição.
+    intervaloCountdown = setInterval(() => {
+      if (abaAtiva === 'pendente') renderFila();
+    }, 30000);
   }
 
   tabsEl.querySelectorAll('[data-aba]').forEach((btn) => {
