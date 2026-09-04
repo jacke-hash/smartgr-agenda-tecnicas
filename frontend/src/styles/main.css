@@ -283,6 +283,12 @@ input.invalid,select.invalid{border-color:var(--danger);}
 .date-sugerida-topo input[type="checkbox"]{width:16px;height:16px;cursor:pointer;flex-shrink:0;}
 .date-sugerida-topo .opt-label{margin-bottom:0;}
 
+.date-pager{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:14px;margin-top:4px;}
+.date-pager-btn{background:#fff;border:1px solid var(--border);color:var(--blue);width:32px;height:32px;border-radius:50%;font-size:15px;cursor:pointer;transition:all .15s ease;}
+.date-pager-btn:hover:not(:disabled){background:var(--blue);color:#fff;border-color:var(--blue);}
+.date-pager-btn:disabled{opacity:.35;cursor:not-allowed;}
+.date-pager-info{font-size:12px;color:var(--text-soft);}
+
 .advance-note{
   display:flex;gap:8px;align-items:flex-start;
   background:var(--warn-bg);border:1px solid #F3D9B0;color:var(--warn);

@@ -56,14 +56,26 @@ function opcaoUnicoPreenchida(o) {
 // opcoesForaDoPrazo/destacarOpcoesInvalidas — mesmo shape {data, horaInicio,
 // horaTermino}, então rules/SLA/Calendar não precisam saber que a origem da
 // data mudou.
+// A rota /sugerir-datas agora devolve TODOS os dias disponíveis numa janela
+// de 2 meses (pode passar de 30 dias) — mostrar tudo de uma vez ficaria
+// enorme, então pagina de 4 em 4 (mesmo tamanho de grid de sempre, 2x2) com
+// setinha pra navegar. `data-idx` continua sendo o índice ABSOLUTO no array
+// completo (não muda com a página) — coletarDateOptionsSugeridas/
+// opcoesSugeridasIncompletas continuam funcionando sem saber de paginação,
+// já que `querySelector` acha o card mesmo escondido (`hidden`) numa página
+// que não é a atual, preservando o que a pessoa já marcou ao navegar.
+const SUGERIDAS_POR_PAGINA = 4;
+
 export function renderDateOptionsSugeridasHTML(datasDisponiveis) {
   if (!datasDisponiveis || datasDisponiveis.length === 0) {
     return `<div class="empty-state">Nenhuma data disponível encontrada no momento. Tente novamente mais tarde ou fale com a Julia.</div>`;
   }
-  return datasDisponiveis
-    .map(
-      (dataISO, i) => `
-    <label class="date-option sugerida" data-idx="${i}">
+  const totalPaginas = Math.ceil(datasDisponiveis.length / SUGERIDAS_POR_PAGINA);
+  const cards = datasDisponiveis
+    .map((dataISO, i) => {
+      const pagina = Math.floor(i / SUGERIDAS_POR_PAGINA);
+      return `
+    <label class="date-option sugerida" data-idx="${i}" data-pagina="${pagina}" ${pagina === 0 ? '' : 'hidden'}>
       <div class="date-sugerida-topo">
         <input type="checkbox" class="date-sugerida-check" data-idx="${i}" />
         <span class="opt-label">${formatarDataBR(dataISO)}</span>
@@ -79,18 +91,61 @@ export function renderDateOptionsSugeridasHTML(datasDisponiveis) {
         </div>
       </div>
     </label>
-  `
-    )
+  `;
+    })
     .join('');
+
+  const paginacao =
+    totalPaginas > 1
+      ? `
+    <div class="date-pager">
+      <button type="button" class="date-pager-btn" data-pager="prev" disabled>←</button>
+      <span class="date-pager-info" data-pager-info>Página 1 de ${totalPaginas}</span>
+      <button type="button" class="date-pager-btn" data-pager="next">→</button>
+    </div>
+  `
+      : '';
+
+  return cards + paginacao;
 }
 
 // Destaque visual de "marcada" (borda azul) — reflete o estado do checkbox
-// na hora, sem esperar re-render nenhum.
+// na hora, sem esperar re-render nenhum. Também liga as setas de paginação,
+// se existirem (janela com só 1 página não mostra pager nenhum).
 export function ativarSelecaoSugerida(container) {
   container.querySelectorAll('.date-sugerida-check').forEach((check) => {
     check.addEventListener('change', () => {
       check.closest('.date-option.sugerida')?.classList.toggle('selecionada', check.checked);
     });
+  });
+
+  const btnPrev = container.querySelector('[data-pager="prev"]');
+  const btnNext = container.querySelector('[data-pager="next"]');
+  if (!btnPrev || !btnNext) return;
+
+  const cartoes = [...container.querySelectorAll('.date-option.sugerida')];
+  const totalPaginas = Math.max(...cartoes.map((c) => Number(c.dataset.pagina))) + 1;
+  const infoEl = container.querySelector('[data-pager-info]');
+  let paginaAtual = 0;
+
+  function mostrarPagina() {
+    cartoes.forEach((c) => {
+      c.hidden = Number(c.dataset.pagina) !== paginaAtual;
+    });
+    infoEl.textContent = `Página ${paginaAtual + 1} de ${totalPaginas}`;
+    btnPrev.disabled = paginaAtual === 0;
+    btnNext.disabled = paginaAtual === totalPaginas - 1;
+  }
+
+  btnPrev.addEventListener('click', () => {
+    if (paginaAtual === 0) return;
+    paginaAtual -= 1;
+    mostrarPagina();
+  });
+  btnNext.addEventListener('click', () => {
+    if (paginaAtual === totalPaginas - 1) return;
+    paginaAtual += 1;
+    mostrarPagina();
   });
 }
 

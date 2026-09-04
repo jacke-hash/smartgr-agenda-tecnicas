@@ -250,7 +250,7 @@ export function renderFormWorkshop(container, navigate, user) {
       const resp = await fetch(`${calendarWorkerUrl}/sugerir-datas`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tecnicaIds, diasMinimos: 7, quantidade: 4 })
+        body: JSON.stringify({ tecnicaIds, diasMinimos: 7 })
       });
       const resultado = await resp.json();
       datasSugeridasAtuais = resp.ok ? resultado.datas || [] : [];

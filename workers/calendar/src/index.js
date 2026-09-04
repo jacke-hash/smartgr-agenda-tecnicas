@@ -704,12 +704,14 @@ async function handleSugerirDatas(request, env, headers) {
 
   const tecnicaIds = Array.isArray(body?.tecnicaIds) ? body.tecnicaIds : [];
   const diasMinimos = body.diasMinimos || 7;
-  const quantidade = body.quantidade || 4;
   if (tecnicaIds.length === 0) {
     return json({ status: 'error', message: 'tecnicaIds é obrigatório' }, 400, headers);
   }
 
-  const JANELA_MAX_DIAS = 90;
+  // 2 meses de janela — devolve TODOS os dias disponíveis nesse período (não
+  // só os 4 mais próximos), pro frontend paginar com setinha em vez de travar
+  // a oferta nas primeiras datas.
+  const JANELA_MAX_DIAS = 60;
   const primeiroDia = somarDiasISO(hojeISOBrasilia(), diasMinimos);
   const ultimoDia = somarDiasISO(primeiroDia, JANELA_MAX_DIAS);
   const timeMin = new Date(meiaNoiteBrasiliaMs(primeiroDia)).toISOString();
@@ -741,7 +743,7 @@ async function handleSugerirDatas(request, env, headers) {
   );
 
   const datas = [];
-  for (let diaISO = primeiroDia; diaISO <= ultimoDia && datas.length < quantidade; diaISO = somarDiasISO(diaISO, 1)) {
+  for (let diaISO = primeiroDia; diaISO <= ultimoDia; diaISO = somarDiasISO(diaISO, 1)) {
     const algumaLivre = eventosPorTecnica.some((eventos) => eventos !== null && !tecnicaOcupadaNoDia(eventos, diaISO));
     if (algumaLivre) datas.push(diaISO);
   }
