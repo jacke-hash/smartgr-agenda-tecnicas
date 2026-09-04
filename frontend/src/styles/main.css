@@ -278,6 +278,7 @@ input.invalid,select.invalid{border-color:var(--danger);}
 .time-pair span{font-size:10.5px;color:var(--text-soft);}
 
 .date-option.sugerida{display:block;cursor:pointer;transition:border-color .15s ease, background .15s ease;}
+.date-option.sugerida[hidden]{display:none;}
 .date-option.sugerida.selecionada{border-color:var(--blue);background:rgba(56,83,132,.06);}
 .date-sugerida-topo{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
 .date-sugerida-topo input[type="checkbox"]{width:16px;height:16px;cursor:pointer;flex-shrink:0;}
