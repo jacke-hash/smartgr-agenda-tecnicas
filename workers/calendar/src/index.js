@@ -245,8 +245,27 @@ async function handleCriarEvento(request, env, headers) {
     return json({ status: 'error', message: `Falha ao criar evento: ${corpoErro}` }, 502, headers);
   }
 
-  const evento = await resp.json();
+  let evento = await resp.json();
   console.log('criar-evento: evento criado com sucesso', evento.id);
+
+  // A sala do Meet às vezes não vem pronta na resposta do insert — o Google
+  // ainda está processando o conferenceData/createRequest (status "pending")
+  // e o hangoutLink só aparece buscando o evento de novo um instante depois.
+  // Sem isso, o e-mail de aprovação saía sem link (a agenda da técnica
+  // acaba mostrando certo porque ela só olha depois, já com tudo pronto).
+  if (modalidade === 'online' && !evento.hangoutLink) {
+    for (let tentativa = 0; tentativa < 4 && !evento.hangoutLink; tentativa++) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const respGet = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${evento.id}`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      if (respGet.ok) evento = await respGet.json();
+    }
+    if (!evento.hangoutLink) {
+      console.error(`criar-evento: hangoutLink não ficou pronto a tempo pro evento ${evento.id}`);
+    }
+  }
+
   return json({ status: 'ok', eventId: evento.id, htmlLink: evento.htmlLink, meetLink: evento.hangoutLink || null }, 200, headers);
 }
 
