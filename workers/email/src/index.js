@@ -173,6 +173,7 @@ async function handleNotificarAprovacao(request, env, headers) {
     tecnicaEmail,
     dataHora,
     endereco,
+    meetLink,
     solicitacao
   } = body;
 
@@ -186,6 +187,10 @@ async function handleNotificarAprovacao(request, env, headers) {
 
   const tipoLabel = TIPO_LABEL[tipo] || tipo;
   const local = modalidade === 'online' ? 'Online' : formatEndereco(endereco) || 'A confirmar';
+  const linhaMeet =
+    modalidade === 'online' && meetLink
+      ? `<li><strong>Link da reunião (Google Meet):</strong> <a href="${meetLink}">${meetLink}</a></li>`
+      : '';
 
   await enviarEmail(env, {
     to: vendedorEmail,
@@ -197,6 +202,7 @@ async function handleNotificarAprovacao(request, env, headers) {
         <li><strong>Técnica responsável:</strong> ${tecnicaNome}</li>
         <li><strong>Data:</strong> ${formatarLinhaData(dataHora, tipoReserva)}</li>
         <li><strong>Local:</strong> ${local}</li>
+        ${linhaMeet}
       </ul>
     `
   });
@@ -235,6 +241,7 @@ async function handleNotificarAprovacao(request, env, headers) {
           ${formatarCamposSolicitacao(tipo, solicitacao)}
           <li><strong>Data:</strong> ${formatarLinhaData(dataHora, tipoReserva)}</li>
           <li><strong>Local:</strong> ${local}</li>
+          ${linhaMeet}
         </ul>
       `
     });

@@ -188,7 +188,14 @@ function montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, ender
       : { dateTime: `${dataHora.data}T${dataHora.horaInicio}:00`, timeZone: 'America/Sao_Paulo' },
     end: ehPeriodo
       ? { dateTime: `${dataHora.dataFim}T${dataHora.horaTermino}:00`, timeZone: 'America/Sao_Paulo' }
-      : { dateTime: `${dataHora.data}T${dataHora.horaTermino}:00`, timeZone: 'America/Sao_Paulo' }
+      : { dateTime: `${dataHora.data}T${dataHora.horaTermino}:00`, timeZone: 'America/Sao_Paulo' },
+    // Treinamento online ganha sala do Google Meet automaticamente — pedido
+    // pro próprio Calendar gerar (requestId só precisa ser único por
+    // chamada, não persiste em lugar nenhum). Precisa do query param
+    // conferenceDataVersion=1 na chamada da API pra isso ter efeito.
+    ...(modalidade === 'online'
+      ? { conferenceData: { createRequest: { requestId: crypto.randomUUID(), conferenceSolutionKey: { type: 'hangoutsMeet' } } } }
+      : {})
   };
 }
 
@@ -222,7 +229,11 @@ async function handleCriarEvento(request, env, headers) {
 
   const eventBody = montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, endereco, unidade, nomeSolicitante, dataHora, solicitacao });
 
-  const resp = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+  // conferenceDataVersion=1 é exigido pela API pra processar o
+  // conferenceData/createRequest do eventBody (modalidade online) — sem
+  // isso o Google ignora o pedido de sala e cria o evento sem Meet nenhum.
+  // Inofensivo quando o eventBody não pede conferência (presencial).
+  const resp = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1', {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(eventBody)
@@ -236,7 +247,7 @@ async function handleCriarEvento(request, env, headers) {
 
   const evento = await resp.json();
   console.log('criar-evento: evento criado com sucesso', evento.id);
-  return json({ status: 'ok', eventId: evento.id, htmlLink: evento.htmlLink }, 200, headers);
+  return json({ status: 'ok', eventId: evento.id, htmlLink: evento.htmlLink, meetLink: evento.hangoutLink || null }, 200, headers);
 }
 
 // --- Escala geral (painel da Julia) ---

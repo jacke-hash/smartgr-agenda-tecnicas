@@ -523,6 +523,7 @@ export function renderPainelJulia(container) {
       dataEscolhida,
       googleEventId,
       googleEventLink,
+      googleMeetLink,
       ...solicitacaoParaEmail
     } = item;
 
@@ -544,6 +545,7 @@ export function renderPainelJulia(container) {
 
     let googleEventIdNovo = null;
     let googleEventLinkNovo = null;
+    let googleMeetLinkNovo = null;
     if (calendarWorkerUrl) {
       btnEl.textContent = 'Criando evento na nova agenda...';
       try {
@@ -567,6 +569,7 @@ export function renderPainelJulia(container) {
         if (respCriar.ok) {
           googleEventIdNovo = resultadoCriar.eventId;
           googleEventLinkNovo = resultadoCriar.htmlLink;
+          googleMeetLinkNovo = resultadoCriar.meetLink || null;
         } else {
           msgEl.innerHTML = `<div class="error-note">Falha ao criar evento na agenda da nova técnica: ${resultadoCriar.message || 'erro desconhecido'}. Reatribuição cancelada.</div>`;
           btnEl.disabled = false;
@@ -585,13 +588,15 @@ export function renderPainelJulia(container) {
       tecnicaAtribuida: novoTecnicaId,
       tecnicaEmail: novaTecnica?.email || null,
       googleEventId: googleEventIdNovo,
-      googleEventLink: googleEventLinkNovo
+      googleEventLink: googleEventLinkNovo,
+      googleMeetLink: googleMeetLinkNovo
     });
 
     item.tecnicaAtribuida = novoTecnicaId;
     item.tecnicaEmail = novaTecnica?.email || null;
     item.googleEventId = googleEventIdNovo;
     item.googleEventLink = googleEventLinkNovo;
+    item.googleMeetLink = googleMeetLinkNovo;
 
     msgEl.innerHTML = `<div class="success-note">Reatribuído para ${novaTecnica?.nome || 'nova técnica'} com sucesso.</div>`;
     btnEl.disabled = false;
@@ -686,6 +691,10 @@ export function renderPainelJulia(container) {
     } = item;
 
     const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
+    // Online: worker pede pro Calendar gerar uma sala do Meet junto com o
+    // evento (montarEventBody/conferenceData) — meetLink vem na resposta e
+    // é isso que entra no e-mail de aprovação do solicitante.
+    let meetLink = null;
     if (calendarWorkerUrl) {
       try {
         const resp = await fetch(`${calendarWorkerUrl}/criar-evento`, {
@@ -706,9 +715,11 @@ export function renderPainelJulia(container) {
         });
         const resultado = await resp.json();
         if (resp.ok) {
+          meetLink = resultado.meetLink || null;
           await updateDoc(doc(db, item._colecao, item._id), {
             googleEventId: resultado.eventId,
-            googleEventLink: resultado.htmlLink
+            googleEventLink: resultado.htmlLink,
+            googleMeetLink: meetLink
           });
         } else {
           msgEl.innerHTML = `<div class="error-note">Aprovado, mas falha ao criar evento no Google Calendar: ${resultado.message || 'erro desconhecido'}</div>`;
@@ -776,6 +787,7 @@ export function renderPainelJulia(container) {
         tecnicaEmail: tecnica?.email || null,
         dataHora,
         endereco,
+        meetLink,
         solicitacao: solicitacaoParaEmail
       });
     }
