@@ -30,8 +30,31 @@ function navigate(rota) {
 // master, Julia como aprovadora natural do fluxo.
 const ADMINS_PAINEL = ['julia@smartgr.com.br', 'jacke@smartgr.com.br'];
 
+// Mesma lista usada em firestore.rules (ehTecnica) — espelha a coleção
+// `tecnicas` (scripts/seed-tecnicas.mjs). Precisa ser atualizada nos dois
+// lugares (e a Escala redeployada) sempre que uma técnica entrar ou sair,
+// já que a regra de segurança não consegue consultar a coleção por e-mail
+// (Firestore Rules não faz query por campo, só get() por id conhecido).
+const TECNICAS_ATIVAS = [
+  'fernanda@smartgr.com.br',
+  'marianacruz@smartgr.com.br',
+  'vithoria@smartgr.com.br',
+  'eloah@smartgr.com.br',
+  'julia@smartgr.com.br'
+];
+
 function podeVerPainel(user) {
   return Boolean(user?.email) && ADMINS_PAINEL.includes(user.email.toLowerCase());
+}
+
+function ehTecnica(user) {
+  return Boolean(user?.email) && TECNICAS_ATIVAS.includes(user.email.toLowerCase());
+}
+
+// Escala Geral: técnicas (pra ver/editar a própria agenda e a das colegas)
+// + quem já tinha acesso de aprovador (Jacke como admin master).
+function podeVerEscala(user) {
+  return podeVerPainel(user) || ehTecnica(user);
 }
 
 function renderShell(user) {
@@ -43,7 +66,7 @@ function renderShell(user) {
           <button data-rota="#/">Nova solicitação</button>
           <button data-rota="#/minhas-solicitacoes">Minhas Solicitações</button>
           ${podeVerPainel(user) ? `<button data-rota="#/painel">Painel — Julia</button>` : ''}
-          <button data-rota="#/escala">Escala</button>
+          ${podeVerEscala(user) ? `<button data-rota="#/escala">Escala</button>` : ''}
         </div>
         <div class="user-chip">
           ${user.photoURL ? `<img src="${user.photoURL}" alt="" />` : ''}
@@ -78,9 +101,11 @@ function renderRotaAtual(user) {
 
   const rotaBase = rota.split('?')[0];
 
-  // Escala Geral agora é aberta a qualquer técnica logada (@smartgr.com.br) —
-  // só o Painel de aprovação continua exclusivo de quem aprova.
   if (rotaBase === '#/painel' && !podeVerPainel(user)) {
+    navigate('#/');
+    return;
+  }
+  if (rotaBase === '#/escala' && !podeVerEscala(user)) {
     navigate('#/');
     return;
   }

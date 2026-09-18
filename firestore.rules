@@ -20,6 +20,23 @@ service cloud.firestore {
       );
     }
 
+    // Espelha frontend/src/main.js (TECNICAS_ATIVAS) e a coleção `tecnicas`
+    // (scripts/seed-tecnicas.mjs) — Rules não faz query por campo (só get()
+    // por id conhecido, e o id do doc em `tecnicas` é aleatório, não o
+    // e-mail), então não dá pra checar "existe uma técnica com esse e-mail"
+    // direto na coleção. Lista hardcoded, mesmo padrão já usado em
+    // isAprovador(). Atualizar aqui + em main.js (e reployar as regras)
+    // sempre que uma técnica entrar ou sair.
+    function ehTecnica() {
+      return isSmartGRUser() && request.auth.token.email in [
+        'fernanda@smartgr.com.br',
+        'marianacruz@smartgr.com.br',
+        'vithoria@smartgr.com.br',
+        'eloah@smartgr.com.br',
+        'julia@smartgr.com.br'
+      ];
+    }
+
     // Antecedência mínima calculada em America/Sao_Paulo (UTC-3 fixo, sem
     // horário de verão desde 2019). Espelha frontend/src/utils/date-options.js
     // (diasAntecedenciaOk) — qualquer mudança em um lado precisa refletir no
@@ -206,12 +223,11 @@ service cloud.firestore {
     }
 
     // Escala geral (grade semanal/diária) — não nasce de solicitação, não
-    // tem vendedor nem técnica "dona". Aberta a qualquer @smartgr.com.br
-    // (todas as técnicas veem e editam a grade de todo mundo, igual a
-    // Julia sempre fez) — frontend/src/main.js não gateia mais essa rota
-    // por podeVerPainel.
+    // tem vendedor nem técnica "dona". Só técnicas (ehTecnica) + quem já
+    // tinha acesso de aprovador veem/editam a grade de todo mundo — não é
+    // qualquer conta @smartgr.com.br (vendedor, por exemplo, não entra).
     match /escalas/{id} {
-      allow read, write: if isSmartGRUser();
+      allow read, write: if isAprovador() || ehTecnica();
     }
   }
 }
