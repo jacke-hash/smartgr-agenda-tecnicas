@@ -171,9 +171,12 @@ async function handleNotificarAprovacao(request, env, headers) {
     modalidade,
     tecnicaNome,
     tecnicaEmail,
+    tecnicaNome2,
+    tecnicaEmail2,
     dataHora,
     endereco,
     meetLink,
+    meetLink2,
     solicitacao
   } = body;
 
@@ -187,10 +190,18 @@ async function handleNotificarAprovacao(request, env, headers) {
 
   const tipoLabel = TIPO_LABEL[tipo] || tipo;
   const local = modalidade === 'online' ? 'Online' : formatEndereco(endereco) || 'A confirmar';
+  // DEBUG temporário: enquanto investigamos por que o link não estava
+  // chegando, a linha aparece sempre que for online — mesmo vazio — pra dar
+  // pra ver no próprio e-mail o que este worker recebeu de fato no body.
   const linhaMeet =
-    modalidade === 'online' && meetLink
-      ? `<li><strong>Link da reunião (Google Meet):</strong> <a href="${meetLink}">${meetLink}</a></li>`
+    modalidade === 'online'
+      ? meetLink
+        ? `<li><strong>Link da reunião (Google Meet):</strong> <a href="${meetLink}">${meetLink}</a></li>`
+        : `<li><strong>Link da reunião (Google Meet):</strong> [DEBUG: meetLink recebido = ${JSON.stringify(meetLink)}]</li>`
       : '';
+
+  const labelTecnicaResponsavel = tecnicaNome2 ? 'Técnicas responsáveis' : 'Técnica responsável';
+  const nomesTecnicas = tecnicaNome2 ? `${tecnicaNome} e ${tecnicaNome2}` : tecnicaNome;
 
   await enviarEmail(env, {
     to: vendedorEmail,
@@ -199,7 +210,7 @@ async function handleNotificarAprovacao(request, env, headers) {
       <p>Olá${vendedorNome ? ` ${vendedorNome}` : ''},</p>
       <p>Seu treinamento (${tipoLabel}) foi aprovado.</p>
       <ul>
-        <li><strong>Técnica responsável:</strong> ${tecnicaNome}</li>
+        <li><strong>${labelTecnicaResponsavel}:</strong> ${nomesTecnicas}</li>
         <li><strong>Data:</strong> ${formatarLinhaData(dataHora, tipoReserva)}</li>
         <li><strong>Local:</strong> ${local}</li>
         ${linhaMeet}
@@ -246,6 +257,60 @@ async function handleNotificarAprovacao(request, env, headers) {
       `
     });
   }
+
+  // 2ª técnica opcional (frontend/src/pages/painel-julia.js, botão "+
+  // Atribuir outra técnica") — recebe o mesmo aviso, cada uma com o próprio
+  // link de Meet (cada uma tem seu próprio evento/sala, criados em chamadas
+  // separadas ao worker de calendar).
+  if (tecnicaEmail2) {
+    const nomeSolicitanteLabel = vendedorNome || tecnicaNome2;
+    const linhaMeet2 =
+      modalidade === 'online' && meetLink2
+        ? `<li><strong>Link da reunião (Google Meet):</strong> <a href="${meetLink2}">${meetLink2}</a></li>`
+        : '';
+    await enviarEmail(env, {
+      to: tecnicaEmail2,
+      subject: `Novo treinamento atribuído a você: ${tipoLabel} — ${solicitacao?.vendedor || solicitacao?.vendedorAcompanha || solicitacao?.localInstituicao || solicitacao?.nomeRevenda || nomeSolicitanteLabel}`,
+      html: `
+        <p>Olá${tecnicaNome2 ? ` ${tecnicaNome2}` : ''},</p>
+        <p>Você foi designada (junto com ${tecnicaNome}) para um novo treinamento (${tipoLabel}). Consulte os dados abaixo e confira sua agenda para se programar.</p>
+        <ul>
+          ${formatarCamposSolicitacao(tipo, solicitacao)}
+          <li><strong>Data:</strong> ${formatarLinhaData(dataHora, tipoReserva)}</li>
+          <li><strong>Local:</strong> ${local}</li>
+          ${linhaMeet2}
+        </ul>
+      `
+    });
+  }
+
+  return json({ status: 'ok' }, 200, headers);
+}
+
+async function handleNotificarRecusaTecnica(request, env, headers) {
+  const body = await request.json();
+  const { tecnicaNome, tipo, tipoReserva, dataHora, motivo, vendedorNome, painelUrl } = body;
+
+  if (!tecnicaNome || !tipo) {
+    return json({ status: 'error', message: 'tecnicaNome e tipo são obrigatórios' }, 400, headers);
+  }
+
+  const tipoLabel = TIPO_LABEL[tipo] || tipo;
+
+  await enviarEmail(env, {
+    to: 'julia@smartgr.com.br',
+    subject: `Técnica recusou treinamento fora do expediente — ${tipoLabel}`,
+    html: `
+      <p><strong>${tecnicaNome}</strong> recusou um treinamento (${tipoLabel}) já aprovado por cair fora do horário comercial (fim de semana, feriado ou fora de 08:30–17:30).</p>
+      <ul>
+        ${vendedorNome ? `<li><strong>Solicitante:</strong> ${vendedorNome}</li>` : ''}
+        ${dataHora ? `<li><strong>Data:</strong> ${formatarLinhaData(dataHora, tipoReserva)}</li>` : ''}
+        <li><strong>Motivo:</strong> ${motivo || '—'}</li>
+      </ul>
+      <p>Reatribua outra técnica pela aba "Aprovadas" do painel.</p>
+      ${painelUrl ? `<p><a href="${painelUrl}">Abrir painel</a></p>` : ''}
+    `
+  });
 
   return json({ status: 'ok' }, 200, headers);
 }
@@ -296,6 +361,9 @@ export default {
       }
       if (url.pathname === '/notificar-recusa' && request.method === 'POST') {
         return await handleNotificarRecusa(request, env, headers);
+      }
+      if (url.pathname === '/notificar-recusa-tecnica' && request.method === 'POST') {
+        return await handleNotificarRecusaTecnica(request, env, headers);
       }
     } catch (err) {
       console.error('erro não tratado:', err.stack || err.message || err);

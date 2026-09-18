@@ -167,7 +167,7 @@ export function renderPainelJulia(container) {
 
   function garantirEstado(item) {
     if (!estadoUi[item._id]) {
-      estadoUi[item._id] = { dataEscolhidaIdx: null, tecnicaId: '' };
+      estadoUi[item._id] = { dataEscolhidaIdx: null, tecnicaId: '', tecnicaId2: '', mostrarSegundaTecnica: false };
     }
     return estadoUi[item._id];
   }
@@ -318,8 +318,11 @@ export function renderPainelJulia(container) {
     const aindaVerificando = estado.conflitos === undefined;
     const statusEscolhida =
       estado.tecnicaId && idxRelevante !== null ? estado.conflitos?.[estado.tecnicaId]?.[idxRelevante] : null;
+    const statusEscolhida2 =
+      estado.tecnicaId2 && idxRelevante !== null ? estado.conflitos?.[estado.tecnicaId2]?.[idxRelevante] : null;
     const combinacaoIndisponivel = Boolean(statusEscolhida?.conflito || statusEscolhida?.folga);
-    const aprovarBloqueado = aindaVerificando || combinacaoIndisponivel;
+    const combinacaoIndisponivel2 = Boolean(statusEscolhida2?.conflito || statusEscolhida2?.folga);
+    const aprovarBloqueado = aindaVerificando || combinacaoIndisponivel || combinacaoIndisponivel2;
 
     return `
       <div class="request-card" data-item-id="${item._id}">
@@ -354,6 +357,11 @@ export function renderPainelJulia(container) {
               return `<div class="error-note">Nenhuma técnica livre nesse horário. Escolha outra data.</div>`;
             }
 
+            // A segunda técnica, quando ativada, nunca pode ser a mesma
+            // pessoa já escolhida como principal — sem isso o "+" permitiria
+            // duplicar evento pra ela mesma.
+            const tecnicasParaMostrar2 = tecnicasParaMostrar.filter((t) => t.id !== estado.tecnicaId);
+
             return `
           <div class="assign-row">
             <div class="field">
@@ -370,6 +378,28 @@ export function renderPainelJulia(container) {
               </select>
             </div>
           </div>
+          ${
+            estado.mostrarSegundaTecnica
+              ? `
+          <div class="assign-row">
+            <div class="field">
+              <label>2ª técnica (opcional)</label>
+              <select data-select-tecnica2="${item._id}">
+                <option value="">Selecione...</option>
+                ${tecnicasParaMostrar2
+                  .map((t) => {
+                    const status = idxRelevante !== null ? estado.conflitos?.[t.id]?.[idxRelevante] : null;
+                    const tag = status?.folga ? ' 😴 folga' : status?.conflito ? ' ⚠️ conflito' : '';
+                    return `<option value="${t.id}" ${estado.tecnicaId2 === t.id ? 'selected' : ''}>${t.nome}${tag}</option>`;
+                  })
+                  .join('')}
+              </select>
+            </div>
+            <button type="button" class="btn btn-secondary" data-remover-segunda-tecnica="${item._id}">Remover</button>
+          </div>
+          `
+              : `<button type="button" class="btn btn-secondary" data-add-segunda-tecnica="${item._id}">+ Atribuir outra técnica</button>`
+          }
           `;
           })()}
           ${
@@ -382,6 +412,15 @@ export function renderPainelJulia(container) {
                     : `⚠️ Técnica selecionada tem conflito de agenda nesse horário${statusEscolhida.eventoConflitante ? ` — bate com ${formatarEventoConflitante(statusEscolhida.eventoConflitante)}` : ''}. Escolha outra técnica ou data.`
                 }</div>`
                 : ''
+          }
+          ${
+            !aindaVerificando && combinacaoIndisponivel2
+              ? `<div class="error-note">${
+                  statusEscolhida2.folga
+                    ? `😴 2ª técnica selecionada está de folga (trabalhou no domingo anterior)${statusEscolhida2.eventoConflitante ? ` — ${formatarEventoConflitante(statusEscolhida2.eventoConflitante)}` : ''}. Escolha outra técnica ou remova.`
+                    : `⚠️ 2ª técnica selecionada tem conflito de agenda nesse horário${statusEscolhida2.eventoConflitante ? ` — bate com ${formatarEventoConflitante(statusEscolhida2.eventoConflitante)}` : ''}. Escolha outra técnica ou remova.`
+                }</div>`
+              : ''
           }
           <div class="action-row">
             <button class="btn btn-approve" data-aprovar="${item._id}" ${aprovarBloqueado ? 'disabled' : ''}>Aprovar e atribuir</button>
@@ -397,6 +436,7 @@ export function renderPainelJulia(container) {
     const tipoLabel = TAG_TIPO[item.tipo]?.label || item.tipo;
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
     const tecnica = tecnicas.find((t) => t.id === item.tecnicaAtribuida);
+    const tecnica2 = item.tecnicaAtribuida2 ? tecnicas.find((t) => t.id === item.tecnicaAtribuida2) : null;
     const dataHora = formatarDataEscolhida(item);
     const statusLabel = item.status === 'aprovado' ? 'Aprovada' : 'Recusada';
 
@@ -417,10 +457,18 @@ export function renderPainelJulia(container) {
           <div class="subhead">${item.status === 'aprovado' ? 'Decisão' : 'Recusada em'}</div>
           <p>
             ${item.status === 'aprovado' ? `<strong>Técnica:</strong> ${tecnica?.nome || '—'} — ` : ''}
+            ${item.status === 'aprovado' && tecnica2 ? `<strong>2ª técnica:</strong> ${tecnica2.nome} — ` : ''}
             ${dataHora ? `<strong>Data:</strong> ${dataHora} — ` : ''}
             <strong>${item.status === 'aprovado' ? 'Aprovada' : 'Recusada'} em:</strong> ${formatDataHora(item.aprovadoEm)}
           </p>
           ${item.status === 'recusado' && item.motivoRecusa ? `<p><strong>Motivo:</strong> ${item.motivoRecusa}</p>` : ''}
+          ${
+            (item.recusasTecnica || []).length
+              ? `<div class="error-note">${item.recusasTecnica
+                  .map((r) => `😴 ${r.tecnicaNome} recusou (${r.slot === 'primaria' ? '1ª' : '2ª'} técnica) em ${new Date(r.em).toLocaleString('pt-BR')} — motivo: ${r.motivo}`)
+                  .join('<br>')}</div>`
+              : ''
+          }
           ${
             item.status === 'aprovado'
               ? `
@@ -646,17 +694,29 @@ export function renderPainelJulia(container) {
       msgEl.innerHTML = `<div class="error-note">${status?.folga ? `😴 Técnica selecionada está de folga (trabalhou no domingo anterior)${detalhe}. Escolha outra técnica ou data.` : `⚠️ Técnica selecionada tem conflito de agenda nesse horário${detalhe}. Escolha outra técnica ou data.`}</div>`;
       return;
     }
+    if (estado.mostrarSegundaTecnica && estado.tecnicaId2 && tecnicaIndisponivelEm(estado, estado.tecnicaId2, idxRelevante)) {
+      const status = estado.conflitos?.[estado.tecnicaId2]?.[idxRelevante];
+      const detalhe = status?.eventoConflitante ? ` — ${formatarEventoConflitante(status.eventoConflitante)}` : '';
+      msgEl.innerHTML = `<div class="error-note">${status?.folga ? `😴 2ª técnica está de folga (trabalhou no domingo anterior)${detalhe}. Escolha outra técnica ou remova.` : `⚠️ 2ª técnica tem conflito de agenda nesse horário${detalhe}. Escolha outra técnica ou remova.`}</div>`;
+      return;
+    }
 
     const dataHora = item.opcoesData[estado.dataEscolhidaIdx];
     // Denormalizado igual vendedorEmail — sem isso o painel "Minhas
     // Solicitações" da técnica não tem como filtrar por e-mail (tecnicaAtribuida
     // só guarda o ID do doc dela).
     const tecnicaEmail = tecnicas.find((t) => t.id === estado.tecnicaId)?.email || null;
+    // 2ª técnica é opcional — só usada quando a Julia clica em "+ Atribuir
+    // outra técnica" E escolhe alguém nesse segundo select.
+    const tecnicaId2 = estado.mostrarSegundaTecnica ? estado.tecnicaId2 : '';
+    const tecnicaEmail2 = tecnicaId2 ? tecnicas.find((t) => t.id === tecnicaId2)?.email || null : null;
 
     const payload = {
       status: 'aprovado',
       tecnicaAtribuida: estado.tecnicaId,
       tecnicaEmail,
+      tecnicaAtribuida2: tecnicaId2 || null,
+      tecnicaEmail2,
       dataEscolhida: dataHora,
       aprovadoEm: serverTimestamp()
     };
@@ -729,6 +789,42 @@ export function renderPainelJulia(container) {
       }
     }
 
+    const tecnica2 = tecnicaId2 ? tecnicas.find((t) => t.id === tecnicaId2) : null;
+    let meetLink2 = null;
+    if (calendarWorkerUrl && tecnicaId2) {
+      try {
+        const resp2 = await fetch(`${calendarWorkerUrl}/criar-evento`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tecnicaId: tecnicaId2,
+            tipo: item.tipo,
+            tipoTreinamento: item.tipoTreinamento || null,
+            tipoReserva: item.tipoReserva || 'unico',
+            modalidade,
+            endereco,
+            unidade: item.unidade || null,
+            nomeSolicitante,
+            dataHora,
+            solicitacao: solicitacaoParaEmail
+          })
+        });
+        const resultado2 = await resp2.json();
+        if (resp2.ok) {
+          meetLink2 = resultado2.meetLink || null;
+          await updateDoc(doc(db, item._colecao, item._id), {
+            googleEventId2: resultado2.eventId,
+            googleEventLink2: resultado2.htmlLink,
+            googleMeetLink2: meetLink2
+          });
+        } else {
+          msgEl.innerHTML += `<div class="error-note">Aprovado, mas falha ao criar evento na agenda da 2ª técnica: ${resultado2.message || 'erro desconhecido'}</div>`;
+        }
+      } catch (err) {
+        msgEl.innerHTML += `<div class="error-note">Aprovado, mas falha ao criar evento na agenda da 2ª técnica: ${err.message}</div>`;
+      }
+    }
+
     // Mesmo critério do e-mail de café/atendimento (workers/email, gatilho
     // pra Nayra): interno + presencial + unidade Zona Sul. Além do e-mail,
     // cria o MESMO evento também na agenda dela — reaproveita o /criar-evento
@@ -785,9 +881,12 @@ export function renderPainelJulia(container) {
         modalidade,
         tecnicaNome: tecnica?.nome || '—',
         tecnicaEmail: tecnica?.email || null,
+        tecnicaNome2: tecnica2?.nome || null,
+        tecnicaEmail2: tecnica2?.email || null,
         dataHora,
         endereco,
         meetLink,
+        meetLink2,
         solicitacao: solicitacaoParaEmail
       });
     }
@@ -862,6 +961,35 @@ export function renderPainelJulia(container) {
       const item = pendentes.find((p) => p._id === itemId);
       select.addEventListener('change', () => {
         garantirEstado(item).tecnicaId = select.value;
+        renderFila();
+      });
+    });
+
+    queueEl.querySelectorAll('[data-select-tecnica2]').forEach((select) => {
+      const itemId = select.dataset.selectTecnica2;
+      const item = pendentes.find((p) => p._id === itemId);
+      select.addEventListener('change', () => {
+        garantirEstado(item).tecnicaId2 = select.value;
+        renderFila();
+      });
+    });
+
+    queueEl.querySelectorAll('[data-add-segunda-tecnica]').forEach((btn) => {
+      const itemId = btn.dataset.addSegundaTecnica;
+      const item = pendentes.find((p) => p._id === itemId);
+      btn.addEventListener('click', () => {
+        garantirEstado(item).mostrarSegundaTecnica = true;
+        renderFila();
+      });
+    });
+
+    queueEl.querySelectorAll('[data-remover-segunda-tecnica]').forEach((btn) => {
+      const itemId = btn.dataset.removerSegundaTecnica;
+      const item = pendentes.find((p) => p._id === itemId);
+      btn.addEventListener('click', () => {
+        const estado = garantirEstado(item);
+        estado.mostrarSegundaTecnica = false;
+        estado.tecnicaId2 = '';
         renderFila();
       });
     });
