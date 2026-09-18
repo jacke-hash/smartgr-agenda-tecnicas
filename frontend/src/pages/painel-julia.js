@@ -465,7 +465,7 @@ export function renderPainelJulia(container) {
           ${
             (item.recusasTecnica || []).length
               ? `<div class="error-note">${item.recusasTecnica
-                  .map((r) => `😴 ${r.tecnicaNome} recusou (${r.slot === 'primaria' ? '1ª' : '2ª'} técnica) em ${new Date(r.em).toLocaleString('pt-BR')} — motivo: ${r.motivo}`)
+                  .map((r) => `😴 ${r.tecnicaNome} recusou (${r.slot === 'primaria' ? '1ª' : '2ª'} técnica) em ${new Date(r.em).toLocaleString('pt-BR')}${r.motivo ? ` — motivo: ${r.motivo}` : ''}`)
                   .join('<br>')}</div>`
               : ''
           }

@@ -183,15 +183,11 @@ export function renderMinhasSolicitacoes(container, navigate, user) {
     msgEl.innerHTML = '';
 
     const motivo = window.prompt(
-      'Este treinamento cai fora do horário comercial (fim de semana, feriado ou fora de 08:30–17:30).\nMotivo da recusa (obrigatório):',
+      'Este treinamento cai fora do horário comercial (fim de semana, feriado ou fora de 08:30–17:30).\nMotivo da recusa (opcional):',
       ''
     );
     if (motivo === null) return;
     const motivoLimpo = motivo.trim();
-    if (!motivoLimpo) {
-      window.alert('Motivo é obrigatório para recusar.');
-      return;
-    }
 
     btnEl.disabled = true;
     btnEl.textContent = 'Recusando...';
