@@ -16,6 +16,20 @@ import { TAG_TIPO, formatDataHora } from '../utils/tipo-labels.js';
 
 const COLECOES = ['solicitacoes_consumidor_final', 'solicitacoes_revenda', 'solicitacoes_workshop'];
 
+// Até 5 técnicas no mesmo evento — total de técnicas ativas no time hoje.
+// Sufixo '' é sempre a 1ª/principal (compatível com os documentos antigos,
+// que só tinham tecnicaAtribuida/tecnicaEmail/googleEventId sem número);
+// '2'..'5' seguem o mesmo padrão de nome de campo. Espelha
+// firestore.rules (mesma lista de sufixos) — mudar aqui sem mudar lá quebra
+// a recusa da técnica pros slots novos.
+const SUFIXOS_TECNICA = ['', '2', '3', '4', '5'];
+const MAX_TECNICAS = SUFIXOS_TECNICA.length;
+const ORDINAL_TECNICA = ['1ª', '2ª', '3ª', '4ª', '5ª'];
+
+function campo(nomeBase, sufixo) {
+  return `${nomeBase}${sufixo}`;
+}
+
 function formatCountdown(slaExpiraEm) {
   if (!slaExpiraEm) return { texto: 'sem SLA', classe: '' };
   const alvo = slaExpiraEm.toDate ? slaExpiraEm.toDate() : new Date(slaExpiraEm);
@@ -146,6 +160,7 @@ export function renderPainelJulia(container) {
   let porColecao = {};
   const historico = { aprovado: [], recusado: [] };
   const estadoUi = {};
+  const estadoHistoricoUi = {};
   let unsubscribes = [];
   let intervaloCountdown = null;
   let abaAtiva = 'pendente';
@@ -167,7 +182,10 @@ export function renderPainelJulia(container) {
 
   function garantirEstado(item) {
     if (!estadoUi[item._id]) {
-      estadoUi[item._id] = { dataEscolhidaIdx: null, tecnicaId: '', tecnicaId2: '', mostrarSegundaTecnica: false };
+      // tecnicaIds[0] é a principal (sempre visível/obrigatória); os
+      // seguintes só existem no array depois que "+ Adicionar nova técnica"
+      // é clicado — length do array é quantos slots estão visíveis agora.
+      estadoUi[item._id] = { dataEscolhidaIdx: null, tecnicaIds: [''] };
     }
     return estadoUi[item._id];
   }
@@ -316,13 +334,13 @@ export function renderPainelJulia(container) {
     // "sem conflito confirmado" quando na verdade era "ainda não sei", e
     // Julia podia aprovar antes da checagem terminar.
     const aindaVerificando = estado.conflitos === undefined;
-    const statusEscolhida =
-      estado.tecnicaId && idxRelevante !== null ? estado.conflitos?.[estado.tecnicaId]?.[idxRelevante] : null;
-    const statusEscolhida2 =
-      estado.tecnicaId2 && idxRelevante !== null ? estado.conflitos?.[estado.tecnicaId2]?.[idxRelevante] : null;
-    const combinacaoIndisponivel = Boolean(statusEscolhida?.conflito || statusEscolhida?.folga);
-    const combinacaoIndisponivel2 = Boolean(statusEscolhida2?.conflito || statusEscolhida2?.folga);
-    const aprovarBloqueado = aindaVerificando || combinacaoIndisponivel || combinacaoIndisponivel2;
+    // Um status por slot preenchido (índice 0 = principal) — usado tanto pra
+    // bloquear "Aprovar" quanto pros avisos de conflito/folga por slot.
+    const statusPorSlot = estado.tecnicaIds.map((tid) =>
+      tid && idxRelevante !== null ? estado.conflitos?.[tid]?.[idxRelevante] : null
+    );
+    const combinacaoIndisponivelAlguma = statusPorSlot.some((s) => s?.conflito || s?.folga);
+    const aprovarBloqueado = aindaVerificando || combinacaoIndisponivelAlguma;
 
     return `
       <div class="request-card" data-item-id="${item._id}">
@@ -346,80 +364,75 @@ export function renderPainelJulia(container) {
             // "perderia" a seleção sem avisar — o aviso de indisponível
             // continua aparecendo do jeito que já aparecia.
             const podeFiltrar = idxRelevante !== null && !aindaVerificando;
-            const tecnicasParaMostrar = podeFiltrar
-              ? tecnicas.filter((t) => {
-                  const status = estado.conflitos?.[t.id]?.[idxRelevante];
-                  return (!status?.conflito && !status?.folga) || t.id === estado.tecnicaId;
-                })
+            const disponivelNoHorario = (t) => {
+              if (!podeFiltrar) return true;
+              const status = estado.conflitos?.[t.id]?.[idxRelevante];
+              return !status?.conflito && !status?.folga;
+            };
+            const tecnicasParaMostrarSlot0 = podeFiltrar
+              ? tecnicas.filter((t) => disponivelNoHorario(t) || t.id === estado.tecnicaIds[0])
               : tecnicas;
 
-            if (podeFiltrar && tecnicasParaMostrar.length === 0) {
+            if (podeFiltrar && tecnicasParaMostrarSlot0.length === 0) {
               return `<div class="error-note">Nenhuma técnica livre nesse horário. Escolha outra data.</div>`;
             }
 
-            // A segunda técnica, quando ativada, nunca pode ser a mesma
-            // pessoa já escolhida como principal — sem isso o "+" permitiria
-            // duplicar evento pra ela mesma.
-            const tecnicasParaMostrar2 = tecnicasParaMostrar.filter((t) => t.id !== estado.tecnicaId);
-
-            return `
+            function renderSelectSlot(i) {
+              const tecnicaIdAtual = estado.tecnicaIds[i];
+              // Ninguém pode aparecer duplicado entre os slots — uma técnica
+              // já escolhida em OUTRO slot some das opções deste (menos dela
+              // mesma, senão o próprio slot "perderia" a seleção).
+              const outrosEscolhidos = estado.tecnicaIds.filter((tid, idx) => idx !== i && tid);
+              const opcoes = tecnicas.filter(
+                (t) => (disponivelNoHorario(t) || t.id === tecnicaIdAtual) && !outrosEscolhidos.includes(t.id)
+              );
+              const label = i === 0 ? 'Técnica responsável' : `${ORDINAL_TECNICA[i]} técnica (opcional)`;
+              return `
           <div class="assign-row">
             <div class="field">
-              <label>Técnica responsável</label>
-              <select data-select-tecnica="${item._id}">
+              <label>${label}</label>
+              <select data-select-tecnica-slot="${item._id}" data-slot="${i}">
                 <option value="">Selecione...</option>
-                ${tecnicasParaMostrar
+                ${opcoes
                   .map((t) => {
                     const status = idxRelevante !== null ? estado.conflitos?.[t.id]?.[idxRelevante] : null;
                     const tag = status?.folga ? ' 😴 folga' : status?.conflito ? ' ⚠️ conflito' : '';
-                    return `<option value="${t.id}" ${estado.tecnicaId === t.id ? 'selected' : ''}>${t.nome}${tag}</option>`;
+                    return `<option value="${t.id}" ${tecnicaIdAtual === t.id ? 'selected' : ''}>${t.nome}${tag}</option>`;
                   })
                   .join('')}
               </select>
             </div>
+            ${i > 0 ? `<button type="button" class="btn btn-secondary" data-remover-slot="${item._id}" data-slot="${i}">Remover</button>` : ''}
           </div>
-          ${
-            estado.mostrarSegundaTecnica
-              ? `
-          <div class="assign-row">
-            <div class="field">
-              <label>2ª técnica (opcional)</label>
-              <select data-select-tecnica2="${item._id}">
-                <option value="">Selecione...</option>
-                ${tecnicasParaMostrar2
-                  .map((t) => {
-                    const status = idxRelevante !== null ? estado.conflitos?.[t.id]?.[idxRelevante] : null;
-                    const tag = status?.folga ? ' 😴 folga' : status?.conflito ? ' ⚠️ conflito' : '';
-                    return `<option value="${t.id}" ${estado.tecnicaId2 === t.id ? 'selected' : ''}>${t.nome}${tag}</option>`;
-                  })
-                  .join('')}
-              </select>
-            </div>
-            <button type="button" class="btn btn-secondary" data-remover-segunda-tecnica="${item._id}">Remover</button>
-          </div>
-          `
-              : `<button type="button" class="btn btn-secondary" data-add-segunda-tecnica="${item._id}">+ Atribuir outra técnica</button>`
-          }
           `;
+            }
+
+            // Botão só aparece se ainda cabe mais gente (menos de MAX_TECNICAS
+            // slots visíveis) E ainda sobra alguém pra oferecer nesse horário.
+            const cabemMaisSlots = estado.tecnicaIds.length < MAX_TECNICAS;
+            const sobraAlguem = tecnicas.some((t) => !estado.tecnicaIds.includes(t.id) && disponivelNoHorario(t));
+            const botaoAdicionar =
+              cabemMaisSlots && sobraAlguem
+                ? `<button type="button" class="btn btn-secondary" data-add-tecnica-slot="${item._id}">+ Adicionar nova técnica</button>`
+                : '';
+
+            return estado.tecnicaIds.map((_, i) => renderSelectSlot(i)).join('') + botaoAdicionar;
           })()}
+          ${statusPorSlot
+            .map((status, i) => {
+              if (!status || (!status.conflito && !status.folga)) return '';
+              const quem = i === 0 ? 'Técnica selecionada' : `${ORDINAL_TECNICA[i]} técnica selecionada`;
+              const detalhe = status.eventoConflitante ? ` — ${status.folga ? '' : 'bate com '}${formatarEventoConflitante(status.eventoConflitante)}` : '';
+              return `<div class="error-note">${
+                status.folga
+                  ? `😴 ${quem} está de folga (trabalhou no domingo anterior)${detalhe}. Escolha outra técnica ou data.`
+                  : `⚠️ ${quem} tem conflito de agenda nesse horário${detalhe}. Escolha outra técnica ou data.`
+              }</div>`;
+            })
+            .join('')}
           ${
             aindaVerificando
               ? `<div class="checking-note">🔄 Verificando disponibilidade das técnicas na agenda...</div>`
-              : combinacaoIndisponivel
-                ? `<div class="error-note">${
-                  statusEscolhida.folga
-                    ? `😴 Técnica selecionada está de folga (trabalhou no domingo anterior)${statusEscolhida.eventoConflitante ? ` — ${formatarEventoConflitante(statusEscolhida.eventoConflitante)}` : ''}. Escolha outra técnica ou data.`
-                    : `⚠️ Técnica selecionada tem conflito de agenda nesse horário${statusEscolhida.eventoConflitante ? ` — bate com ${formatarEventoConflitante(statusEscolhida.eventoConflitante)}` : ''}. Escolha outra técnica ou data.`
-                }</div>`
-                : ''
-          }
-          ${
-            !aindaVerificando && combinacaoIndisponivel2
-              ? `<div class="error-note">${
-                  statusEscolhida2.folga
-                    ? `😴 2ª técnica selecionada está de folga (trabalhou no domingo anterior)${statusEscolhida2.eventoConflitante ? ` — ${formatarEventoConflitante(statusEscolhida2.eventoConflitante)}` : ''}. Escolha outra técnica ou remova.`
-                    : `⚠️ 2ª técnica selecionada tem conflito de agenda nesse horário${statusEscolhida2.eventoConflitante ? ` — bate com ${formatarEventoConflitante(statusEscolhida2.eventoConflitante)}` : ''}. Escolha outra técnica ou remova.`
-                }</div>`
               : ''
           }
           <div class="action-row">
@@ -432,11 +445,21 @@ export function renderPainelJulia(container) {
     `;
   }
 
+  function garantirEstadoHistorico(itemId) {
+    if (!estadoHistoricoUi[itemId]) estadoHistoricoUi[itemId] = { mostrarNovaTecnica: false };
+    return estadoHistoricoUi[itemId];
+  }
+
   function renderCardHistorico(item) {
     const tipoLabel = TAG_TIPO[item.tipo]?.label || item.tipo;
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
     const tecnica = tecnicas.find((t) => t.id === item.tecnicaAtribuida);
-    const tecnica2 = item.tecnicaAtribuida2 ? tecnicas.find((t) => t.id === item.tecnicaAtribuida2) : null;
+    // Slots extras (2ª..5ª) já ocupados nesse treinamento — cada um vira uma
+    // linha de "trocar/remover" já visível; slots livres não aparecem até
+    // clicar em "+ Adicionar nova técnica" (aí revela só o próximo livre).
+    const slotsExtrasOcupados = SUFIXOS_TECNICA.map((suf, i) => ({ i, sufixo: suf, tecnicaId: item[campo('tecnicaAtribuida', suf)] }))
+      .filter((s) => s.i > 0 && s.tecnicaId);
+    const proximoSlotLivreIdx = SUFIXOS_TECNICA.findIndex((suf, i) => i > 0 && !item[campo('tecnicaAtribuida', suf)]);
     const dataHora = formatarDataEscolhida(item);
     const statusLabel = item.status === 'aprovado' ? 'Aprovada' : 'Recusada';
 
@@ -457,7 +480,13 @@ export function renderPainelJulia(container) {
           <div class="subhead">${item.status === 'aprovado' ? 'Decisão' : 'Recusada em'}</div>
           <p>
             ${item.status === 'aprovado' ? `<strong>Técnica:</strong> ${tecnica?.nome || '—'} — ` : ''}
-            ${item.status === 'aprovado' && tecnica2 ? `<strong>2ª técnica:</strong> ${tecnica2.nome} — ` : ''}
+            ${
+              item.status === 'aprovado' && slotsExtrasOcupados.length
+                ? slotsExtrasOcupados
+                    .map((s) => `<strong>${ORDINAL_TECNICA[s.i]} técnica:</strong> ${tecnicas.find((t) => t.id === s.tecnicaId)?.nome || '—'} — `)
+                    .join('')
+                : ''
+            }
             ${dataHora ? `<strong>Data:</strong> ${dataHora} — ` : ''}
             <strong>${item.status === 'aprovado' ? 'Aprovada' : 'Recusada'} em:</strong> ${formatDataHora(item.aprovadoEm)}
           </p>
@@ -465,7 +494,7 @@ export function renderPainelJulia(container) {
           ${
             (item.recusasTecnica || []).length
               ? `<div class="error-note">${item.recusasTecnica
-                  .map((r) => `😴 ${r.tecnicaNome} recusou (${r.slot === 'primaria' ? '1ª' : '2ª'} técnica) em ${new Date(r.em).toLocaleString('pt-BR')}${r.motivo ? ` — motivo: ${r.motivo}` : ''}`)
+                  .map((r) => `😴 ${r.tecnicaNome} recusou (${r.slotLabel || `${ORDINAL_TECNICA[SUFIXOS_TECNICA.indexOf(r.slot)] || ''} técnica`}) em ${new Date(r.em).toLocaleString('pt-BR')}${r.motivo ? ` — motivo: ${r.motivo}` : ''}`)
                   .join('<br>')}</div>`
               : ''
           }
@@ -484,20 +513,55 @@ export function renderPainelJulia(container) {
             <button class="btn btn-approve" data-reatribuir-salvar="${item._id}">Salvar nova técnica</button>
           </div>
           <div id="msg-reatribuir-${item._id}"></div>
-          <div class="subhead">2ª técnica (opcional)</div>
+          ${(() => {
+            // Ninguém pode ocupar 2 slots do mesmo evento — exclui de cada
+            // select todo mundo já atribuído em QUALQUER slot, menos a
+            // própria seleção atual daquele select.
+            const todosOcupados = [item.tecnicaAtribuida, ...slotsExtrasOcupados.map((s) => s.tecnicaId)].filter(Boolean);
+
+            const linhasOcupadas = slotsExtrasOcupados
+              .map((s) => `
+          <div class="subhead">${ORDINAL_TECNICA[s.i]} técnica</div>
           <div class="assign-row">
             <div class="field">
-              <select data-segunda-tecnica-select="${item._id}">
-                <option value="">Nenhuma</option>
+              <select data-slot-tecnica-select="${item._id}" data-slot-sufixo="${s.sufixo}">
+                <option value="">Nenhuma (remover)</option>
                 ${tecnicas
-                  .filter((t) => t.id !== item.tecnicaAtribuida)
-                  .map((t) => `<option value="${t.id}" ${t.id === item.tecnicaAtribuida2 ? 'selected' : ''}>${t.nome}</option>`)
+                  .filter((t) => t.id === s.tecnicaId || !todosOcupados.includes(t.id))
+                  .map((t) => `<option value="${t.id}" ${t.id === s.tecnicaId ? 'selected' : ''}>${t.nome}</option>`)
                   .join('')}
               </select>
             </div>
-            <button class="btn btn-approve" data-segunda-tecnica-salvar="${item._id}">${tecnica2 ? 'Salvar 2ª técnica' : 'Atribuir 2ª técnica'}</button>
+            <button class="btn btn-approve" data-slot-tecnica-salvar="${item._id}" data-slot-sufixo="${s.sufixo}">Salvar</button>
           </div>
-          <div id="msg-segunda-tecnica-${item._id}"></div>
+          <div id="msg-slot-tecnica-${item._id}-${s.sufixo}"></div>
+          `)
+              .join('');
+
+            if (proximoSlotLivreIdx === -1) return linhasOcupadas;
+
+            const sufixoNovo = SUFIXOS_TECNICA[proximoSlotLivreIdx];
+            const blocoNovoSlot = garantirEstadoHistorico(item._id).mostrarNovaTecnica
+              ? `
+          <div class="subhead">${ORDINAL_TECNICA[proximoSlotLivreIdx]} técnica (nova)</div>
+          <div class="assign-row">
+            <div class="field">
+              <select data-slot-tecnica-select="${item._id}" data-slot-sufixo="${sufixoNovo}">
+                <option value="">Selecione...</option>
+                ${tecnicas
+                  .filter((t) => !todosOcupados.includes(t.id))
+                  .map((t) => `<option value="${t.id}">${t.nome}</option>`)
+                  .join('')}
+              </select>
+            </div>
+            <button class="btn btn-approve" data-slot-tecnica-salvar="${item._id}" data-slot-sufixo="${sufixoNovo}">Atribuir</button>
+          </div>
+          <div id="msg-slot-tecnica-${item._id}-${sufixoNovo}"></div>
+          `
+              : `<button type="button" class="btn btn-secondary" data-add-nova-tecnica="${item._id}">+ Adicionar nova técnica</button>`;
+
+            return linhasOcupadas + blocoNovoSlot;
+          })()}
           `
               : ''
           }
@@ -665,61 +729,59 @@ export function renderPainelJulia(container) {
     btnEl.textContent = 'Salvar nova técnica';
   }
 
-  // Adiciona/troca/remove a 2ª técnica de um treinamento JÁ aprovado — o
-  // "+ Atribuir outra técnica" da aprovação inicial (aprovar()) só cobre
-  // quem já estava no card pendente; isso cobre o caso de precisar reforçar
-  // com uma 2ª técnica depois que já virou evento. Evento próprio por
-  // técnica, mesmo padrão de sempre (Nayra/2ª técnica na aprovação).
-  async function salvarSegundaTecnica(item, novoTecnicaId2, msgEl, btnEl) {
+  // Adiciona/troca/remove uma técnica extra (slot 2ª..5ª) de um treinamento
+  // JÁ aprovado — o "+ Adicionar nova técnica" da aprovação inicial
+  // (aprovar()) só cobre quem já estava no card pendente; isso cobre reforçar
+  // com mais gente depois que já virou evento. Evento próprio por técnica,
+  // mesmo padrão de sempre (Nayra/técnicas extras na aprovação).
+  async function salvarSlotTecnica(item, sufixo, novoTecnicaId, msgEl, btnEl) {
     msgEl.innerHTML = '';
 
-    if (novoTecnicaId2 === (item.tecnicaAtribuida2 || '')) {
+    const ordinal = ORDINAL_TECNICA[SUFIXOS_TECNICA.indexOf(sufixo)];
+    const tecnicaAntigaId = item[campo('tecnicaAtribuida', sufixo)];
+    const textoBotaoPadrao = tecnicaAntigaId ? 'Salvar' : 'Atribuir';
+
+    if (novoTecnicaId === (tecnicaAntigaId || '')) {
       msgEl.innerHTML = `<div class="error-note">Nenhuma mudança pra salvar.</div>`;
       return;
     }
     if (!item.dataEscolhida) {
-      msgEl.innerHTML = `<div class="error-note">Solicitação sem data escolhida — não é possível atribuir 2ª técnica.</div>`;
+      msgEl.innerHTML = `<div class="error-note">Solicitação sem data escolhida — não é possível atribuir ${ordinal} técnica.</div>`;
       return;
     }
 
     const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
-    const tecnicaAntigaId2 = item.tecnicaAtribuida2;
-    const eventIdAntigo2 = item.googleEventId2;
+    const eventIdAntigo = item[campo('googleEventId', sufixo)];
 
     btnEl.disabled = true;
 
-    // Removendo a 2ª técnica (selecionou "Nenhuma") — só apaga o evento dela
-    // e limpa o slot, sem criar nada novo.
-    if (!novoTecnicaId2) {
+    // Removendo a técnica desse slot (selecionou "Nenhuma") — só apaga o
+    // evento dela e limpa o slot, sem criar nada novo.
+    if (!novoTecnicaId) {
       btnEl.textContent = 'Removendo...';
-      if (calendarWorkerUrl && eventIdAntigo2 && tecnicaAntigaId2) {
+      if (calendarWorkerUrl && eventIdAntigo && tecnicaAntigaId) {
         try {
           await fetch(`${calendarWorkerUrl}/escala/excluir-evento`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tecnicaId: tecnicaAntigaId2, eventId: eventIdAntigo2 })
+            body: JSON.stringify({ tecnicaId: tecnicaAntigaId, eventId: eventIdAntigo })
           });
         } catch (err) {
-          console.error('2ª técnica: falha ao excluir evento antigo, seguindo mesmo assim:', err.message);
+          console.error(`${ordinal} técnica: falha ao excluir evento antigo, seguindo mesmo assim:`, err.message);
         }
       }
-      await updateDoc(doc(db, item._colecao, item._id), {
-        tecnicaAtribuida2: null,
-        tecnicaEmail2: null,
-        googleEventId2: null,
-        googleEventLink2: null,
-        googleMeetLink2: null
-      });
-      Object.assign(item, {
-        tecnicaAtribuida2: null,
-        tecnicaEmail2: null,
-        googleEventId2: null,
-        googleEventLink2: null,
-        googleMeetLink2: null
-      });
-      msgEl.innerHTML = `<div class="success-note">2ª técnica removida.</div>`;
+      const camposLimpos = {
+        [campo('tecnicaAtribuida', sufixo)]: null,
+        [campo('tecnicaEmail', sufixo)]: null,
+        [campo('googleEventId', sufixo)]: null,
+        [campo('googleEventLink', sufixo)]: null,
+        [campo('googleMeetLink', sufixo)]: null
+      };
+      await updateDoc(doc(db, item._colecao, item._id), camposLimpos);
+      Object.assign(item, camposLimpos);
+      msgEl.innerHTML = `<div class="success-note">${ordinal} técnica removida.</div>`;
       btnEl.disabled = false;
-      btnEl.textContent = 'Atribuir 2ª técnica';
+      btnEl.textContent = 'Atribuir';
       return;
     }
 
@@ -730,7 +792,7 @@ export function renderPainelJulia(container) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            tecnicaIds: [novoTecnicaId2],
+            tecnicaIds: [novoTecnicaId],
             opcoesData: [item.dataEscolhida],
             tipoReserva: item.tipoReserva || 'unico',
             solicitacaoId: item._id
@@ -738,7 +800,7 @@ export function renderPainelJulia(container) {
         });
         if (respCheck.ok) {
           const { conflitos } = await respCheck.json();
-          const status = conflitos?.[novoTecnicaId2]?.[0];
+          const status = conflitos?.[novoTecnicaId]?.[0];
           if (status?.conflito || status?.folga) {
             const detalhe = status?.eventoConflitante ? ` — ${formatarEventoConflitante(status.eventoConflitante)}` : '';
             msgEl.innerHTML = `<div class="error-note">${
@@ -747,16 +809,16 @@ export function renderPainelJulia(container) {
                 : `⚠️ Técnica tem conflito de agenda nesse horário${detalhe}.`
             } Escolha outra técnica.</div>`;
             btnEl.disabled = false;
-            btnEl.textContent = item.tecnicaAtribuida2 ? 'Salvar 2ª técnica' : 'Atribuir 2ª técnica';
+            btnEl.textContent = textoBotaoPadrao;
             return;
           }
         }
       } catch (err) {
-        console.error('2ª técnica: falha ao checar conflito, seguindo mesmo assim:', err.message);
+        console.error(`${ordinal} técnica: falha ao checar conflito, seguindo mesmo assim:`, err.message);
       }
     }
 
-    const novaTecnica2 = tecnicas.find((t) => t.id === novoTecnicaId2);
+    const novaTecnica = tecnicas.find((t) => t.id === novoTecnicaId);
     const revendaCliente = item.tipo === 'revenda' && item.destinoTreinamento === 'cliente_revenda';
     const modalidade = item.tipo === 'workshop' ? 'presencial' : revendaCliente ? item.tipoTreinamentoCliente : item.modalidade;
     const endereco = revendaCliente ? item.enderecoCliente || null : item.endereco || null;
@@ -767,32 +829,28 @@ export function renderPainelJulia(container) {
       criadoEm,
       slaExpiraEm,
       aprovadoEm,
-      tecnicaAtribuida,
       status,
       opcoesData,
       dataEscolhida,
-      googleEventId,
-      googleEventLink,
-      googleMeetLink,
       ...solicitacaoParaEmail
     } = item;
 
-    if (calendarWorkerUrl && eventIdAntigo2 && tecnicaAntigaId2) {
+    if (calendarWorkerUrl && eventIdAntigo && tecnicaAntigaId) {
       btnEl.textContent = 'Removendo evento antigo...';
       try {
         await fetch(`${calendarWorkerUrl}/escala/excluir-evento`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tecnicaId: tecnicaAntigaId2, eventId: eventIdAntigo2 })
+          body: JSON.stringify({ tecnicaId: tecnicaAntigaId, eventId: eventIdAntigo })
         });
       } catch (err) {
-        console.error('2ª técnica: falha ao excluir evento antigo, seguindo mesmo assim:', err.message);
+        console.error(`${ordinal} técnica: falha ao excluir evento antigo, seguindo mesmo assim:`, err.message);
       }
     }
 
-    let meetLink2 = null;
-    let googleEventId2Novo = null;
-    let googleEventLink2Novo = null;
+    let meetLinkNovo = null;
+    let googleEventIdNovo = null;
+    let googleEventLinkNovo = null;
     if (calendarWorkerUrl) {
       btnEl.textContent = 'Criando evento na agenda dela...';
       try {
@@ -800,7 +858,7 @@ export function renderPainelJulia(container) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            tecnicaId: novoTecnicaId2,
+            tecnicaId: novoTecnicaId,
             tipo: item.tipo,
             tipoTreinamento: item.tipoTreinamento || null,
             tipoReserva: item.tipoReserva || 'unico',
@@ -814,58 +872,56 @@ export function renderPainelJulia(container) {
         });
         const resultadoCriar = await respCriar.json();
         if (respCriar.ok) {
-          googleEventId2Novo = resultadoCriar.eventId;
-          googleEventLink2Novo = resultadoCriar.htmlLink;
-          meetLink2 = resultadoCriar.meetLink || null;
+          googleEventIdNovo = resultadoCriar.eventId;
+          googleEventLinkNovo = resultadoCriar.htmlLink;
+          meetLinkNovo = resultadoCriar.meetLink || null;
         } else {
-          msgEl.innerHTML = `<div class="error-note">Falha ao criar evento na agenda da 2ª técnica: ${resultadoCriar.message || 'erro desconhecido'}.</div>`;
+          msgEl.innerHTML = `<div class="error-note">Falha ao criar evento na agenda da ${ordinal} técnica: ${resultadoCriar.message || 'erro desconhecido'}.</div>`;
           btnEl.disabled = false;
-          btnEl.textContent = item.tecnicaAtribuida2 ? 'Salvar 2ª técnica' : 'Atribuir 2ª técnica';
+          btnEl.textContent = textoBotaoPadrao;
           return;
         }
       } catch (err) {
-        msgEl.innerHTML = `<div class="error-note">Falha ao criar evento na agenda da 2ª técnica: ${err.message}.</div>`;
+        msgEl.innerHTML = `<div class="error-note">Falha ao criar evento na agenda da ${ordinal} técnica: ${err.message}.</div>`;
         btnEl.disabled = false;
-        btnEl.textContent = item.tecnicaAtribuida2 ? 'Salvar 2ª técnica' : 'Atribuir 2ª técnica';
+        btnEl.textContent = textoBotaoPadrao;
         return;
       }
     }
 
-    await updateDoc(doc(db, item._colecao, item._id), {
-      tecnicaAtribuida2: novoTecnicaId2,
-      tecnicaEmail2: novaTecnica2?.email || null,
-      googleEventId2: googleEventId2Novo,
-      googleEventLink2: googleEventLink2Novo,
-      googleMeetLink2: meetLink2
-    });
+    const camposNovos = {
+      [campo('tecnicaAtribuida', sufixo)]: novoTecnicaId,
+      [campo('tecnicaEmail', sufixo)]: novaTecnica?.email || null,
+      [campo('googleEventId', sufixo)]: googleEventIdNovo,
+      [campo('googleEventLink', sufixo)]: googleEventLinkNovo,
+      [campo('googleMeetLink', sufixo)]: meetLinkNovo
+    };
+    await updateDoc(doc(db, item._colecao, item._id), camposNovos);
+    Object.assign(item, camposNovos);
 
-    Object.assign(item, {
-      tecnicaAtribuida2: novoTecnicaId2,
-      tecnicaEmail2: novaTecnica2?.email || null,
-      googleEventId2: googleEventId2Novo,
-      googleEventLink2: googleEventLink2Novo,
-      googleMeetLink2: meetLink2
-    });
-
-    if (novaTecnica2?.email) {
+    if (novaTecnica?.email) {
       notificarTecnicaAdicionada({
-        tecnicaEmail: novaTecnica2.email,
-        tecnicaNome: novaTecnica2.nome,
+        tecnicaEmail: novaTecnica.email,
+        tecnicaNome: novaTecnica.nome,
         tipo: item.tipo,
         tipoTreinamento: item.tipoTreinamento || null,
         tipoReserva: item.tipoReserva || 'unico',
         modalidade,
         dataHora: item.dataEscolhida,
         endereco,
-        meetLink: meetLink2,
+        meetLink: meetLinkNovo,
         vendedorNome: nomeSolicitante,
         solicitacao: solicitacaoParaEmail
       });
     }
 
-    msgEl.innerHTML = `<div class="success-note">2ª técnica: ${novaTecnica2?.nome || '—'} atribuída com sucesso.</div>`;
+    msgEl.innerHTML = `<div class="success-note">${ordinal} técnica: ${novaTecnica?.nome || '—'} atribuída com sucesso.</div>`;
+    // Reseta o "+" pro próximo render (troca de aba, próxima solicitação
+    // aprovada chegando etc.) já refletir o slot ocupado como linha normal
+    // em vez do formulário "(nova)" continuar aberto.
+    garantirEstadoHistorico(item._id).mostrarNovaTecnica = false;
     btnEl.disabled = false;
-    btnEl.textContent = 'Salvar 2ª técnica';
+    btnEl.textContent = 'Salvar';
   }
 
   async function carregarHistorico(status) {
@@ -889,7 +945,7 @@ export function renderPainelJulia(container) {
     const msgEl = container.querySelector(`#msg-${item._id}`);
     msgEl.innerHTML = '';
 
-    if (!estado.tecnicaId) {
+    if (!estado.tecnicaIds[0]) {
       msgEl.innerHTML = `<div class="error-note">Selecione uma técnica antes de aprovar.</div>`;
       return;
     }
@@ -905,42 +961,33 @@ export function renderPainelJulia(container) {
     }
 
     const idxRelevante = estado.dataEscolhidaIdx;
-    if (tecnicaIndisponivelEm(estado, estado.tecnicaId, idxRelevante)) {
-      const status = estado.conflitos?.[estado.tecnicaId]?.[idxRelevante];
+    for (let i = 0; i < estado.tecnicaIds.length; i++) {
+      const tid = estado.tecnicaIds[i];
+      if (!tid || !tecnicaIndisponivelEm(estado, tid, idxRelevante)) continue;
+      const status = estado.conflitos?.[tid]?.[idxRelevante];
       const detalhe = status?.eventoConflitante ? ` — ${formatarEventoConflitante(status.eventoConflitante)}` : '';
-      msgEl.innerHTML = `<div class="error-note">${status?.folga ? `😴 Técnica selecionada está de folga (trabalhou no domingo anterior)${detalhe}. Escolha outra técnica ou data.` : `⚠️ Técnica selecionada tem conflito de agenda nesse horário${detalhe}. Escolha outra técnica ou data.`}</div>`;
-      return;
-    }
-    if (estado.mostrarSegundaTecnica && estado.tecnicaId2 && tecnicaIndisponivelEm(estado, estado.tecnicaId2, idxRelevante)) {
-      const status = estado.conflitos?.[estado.tecnicaId2]?.[idxRelevante];
-      const detalhe = status?.eventoConflitante ? ` — ${formatarEventoConflitante(status.eventoConflitante)}` : '';
-      msgEl.innerHTML = `<div class="error-note">${status?.folga ? `😴 2ª técnica está de folga (trabalhou no domingo anterior)${detalhe}. Escolha outra técnica ou remova.` : `⚠️ 2ª técnica tem conflito de agenda nesse horário${detalhe}. Escolha outra técnica ou remova.`}</div>`;
+      const quem = i === 0 ? 'Técnica selecionada' : `${ORDINAL_TECNICA[i]} técnica`;
+      msgEl.innerHTML = `<div class="error-note">${status?.folga ? `😴 ${quem} está de folga (trabalhou no domingo anterior)${detalhe}. Escolha outra técnica ou data.` : `⚠️ ${quem} tem conflito de agenda nesse horário${detalhe}. Escolha outra técnica ou data.`}</div>`;
       return;
     }
 
     const dataHora = item.opcoesData[estado.dataEscolhidaIdx];
-    // Denormalizado igual vendedorEmail — sem isso o painel "Minhas
-    // Solicitações" da técnica não tem como filtrar por e-mail (tecnicaAtribuida
-    // só guarda o ID do doc dela).
-    const tecnicaEmail = tecnicas.find((t) => t.id === estado.tecnicaId)?.email || null;
-    // 2ª técnica é opcional — só usada quando a Julia clica em "+ Atribuir
-    // outra técnica" E escolhe alguém nesse segundo select.
-    const tecnicaId2 = estado.mostrarSegundaTecnica ? estado.tecnicaId2 : '';
-    const tecnicaEmail2 = tecnicaId2 ? tecnicas.find((t) => t.id === tecnicaId2)?.email || null : null;
+    // Um slot por técnica preenchida (índice 0 = principal, compatível com
+    // documentos antigos sem sufixo). Denormaliza o e-mail igual
+    // vendedorEmail — sem isso o painel "Minhas Solicitações" da técnica não
+    // tem como filtrar por e-mail.
+    const slotsPreenchidos = estado.tecnicaIds
+      .map((tid, i) => ({ i, sufixo: SUFIXOS_TECNICA[i], tid, tecnica: tecnicas.find((t) => t.id === tid) }))
+      .filter((s) => s.tid);
 
-    const payload = {
-      status: 'aprovado',
-      tecnicaAtribuida: estado.tecnicaId,
-      tecnicaEmail,
-      tecnicaAtribuida2: tecnicaId2 || null,
-      tecnicaEmail2,
-      dataEscolhida: dataHora,
-      aprovadoEm: serverTimestamp()
-    };
+    const payload = { status: 'aprovado', dataEscolhida: dataHora, aprovadoEm: serverTimestamp() };
+    slotsPreenchidos.forEach((s) => {
+      payload[campo('tecnicaAtribuida', s.sufixo)] = s.tid;
+      payload[campo('tecnicaEmail', s.sufixo)] = s.tecnica?.email || null;
+    });
 
     await updateDoc(doc(db, item._colecao, item._id), payload);
 
-    const tecnica = tecnicas.find((t) => t.id === estado.tecnicaId);
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
     // Revenda "cliente da revenda" guarda modalidade/endereço em campos
     // próprios (tipoTreinamentoCliente/enderecoCliente) — os campos
@@ -968,17 +1015,16 @@ export function renderPainelJulia(container) {
     } = item;
 
     const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
-    // Online: worker pede pro Calendar gerar uma sala do Meet junto com o
-    // evento (montarEventBody/conferenceData) — meetLink vem na resposta e
-    // é isso que entra no e-mail de aprovação do solicitante.
-    let meetLink = null;
-    if (calendarWorkerUrl) {
+    // Um evento PRÓPRIO por técnica preenchida (índice 0 = principal) — cada
+    // uma tem sua própria sala do Meet quando online (conferenceData com
+    // requestId novo a cada chamada em montarEventBody, no worker).
+    for (const s of calendarWorkerUrl ? slotsPreenchidos : []) {
       try {
         const resp = await fetch(`${calendarWorkerUrl}/criar-evento`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            tecnicaId: estado.tecnicaId,
+            tecnicaId: s.tid,
             tipo: item.tipo,
             tipoTreinamento: item.tipoTreinamento || null,
             tipoReserva: item.tipoReserva || 'unico',
@@ -992,55 +1038,22 @@ export function renderPainelJulia(container) {
         });
         const resultado = await resp.json();
         if (resp.ok) {
-          meetLink = resultado.meetLink || null;
+          s.meetLink = resultado.meetLink || null;
           await updateDoc(doc(db, item._colecao, item._id), {
-            googleEventId: resultado.eventId,
-            googleEventLink: resultado.htmlLink,
-            googleMeetLink: meetLink
+            [campo('googleEventId', s.sufixo)]: resultado.eventId,
+            [campo('googleEventLink', s.sufixo)]: resultado.htmlLink,
+            [campo('googleMeetLink', s.sufixo)]: s.meetLink
           });
         } else {
-          msgEl.innerHTML = `<div class="error-note">Aprovado, mas falha ao criar evento no Google Calendar: ${resultado.message || 'erro desconhecido'}</div>`;
+          const quem = s.i === 0 ? '' : ` na agenda da ${ORDINAL_TECNICA[s.i]} técnica`;
+          msgEl.innerHTML += `<div class="error-note">Aprovado, mas falha ao criar evento${quem}: ${resultado.message || 'erro desconhecido'}</div>`;
         }
       } catch (err) {
-        msgEl.innerHTML = `<div class="error-note">Aprovado, mas falha ao criar evento no Google Calendar: ${err.message}</div>`;
+        const quem = s.i === 0 ? '' : ` na agenda da ${ORDINAL_TECNICA[s.i]} técnica`;
+        msgEl.innerHTML += `<div class="error-note">Aprovado, mas falha ao criar evento${quem}: ${err.message}</div>`;
       }
     }
-
-    const tecnica2 = tecnicaId2 ? tecnicas.find((t) => t.id === tecnicaId2) : null;
-    let meetLink2 = null;
-    if (calendarWorkerUrl && tecnicaId2) {
-      try {
-        const resp2 = await fetch(`${calendarWorkerUrl}/criar-evento`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tecnicaId: tecnicaId2,
-            tipo: item.tipo,
-            tipoTreinamento: item.tipoTreinamento || null,
-            tipoReserva: item.tipoReserva || 'unico',
-            modalidade,
-            endereco,
-            unidade: item.unidade || null,
-            nomeSolicitante,
-            dataHora,
-            solicitacao: solicitacaoParaEmail
-          })
-        });
-        const resultado2 = await resp2.json();
-        if (resp2.ok) {
-          meetLink2 = resultado2.meetLink || null;
-          await updateDoc(doc(db, item._colecao, item._id), {
-            googleEventId2: resultado2.eventId,
-            googleEventLink2: resultado2.htmlLink,
-            googleMeetLink2: meetLink2
-          });
-        } else {
-          msgEl.innerHTML += `<div class="error-note">Aprovado, mas falha ao criar evento na agenda da 2ª técnica: ${resultado2.message || 'erro desconhecido'}</div>`;
-        }
-      } catch (err) {
-        msgEl.innerHTML += `<div class="error-note">Aprovado, mas falha ao criar evento na agenda da 2ª técnica: ${err.message}</div>`;
-      }
-    }
+    const meetLink = slotsPreenchidos[0]?.meetLink || null;
 
     // Mesmo critério do e-mail de café/atendimento (workers/email, gatilho
     // pra Nayra): interno + presencial + unidade Zona Sul. Além do e-mail,
@@ -1096,14 +1109,14 @@ export function renderPainelJulia(container) {
         tipoTreinamento: item.tipoTreinamento || null,
         tipoReserva: item.tipoReserva || 'unico',
         modalidade,
-        tecnicaNome: tecnica?.nome || '—',
-        tecnicaEmail: tecnica?.email || null,
-        tecnicaNome2: tecnica2?.nome || null,
-        tecnicaEmail2: tecnica2?.email || null,
+        // 1ª entrada é sempre a principal — mantém "tecnicaNome"/"tecnicaEmail"
+        // como alias dela pra não quebrar quem já lia esse formato.
+        tecnicaNome: slotsPreenchidos[0]?.tecnica?.nome || '—',
+        tecnicaEmail: slotsPreenchidos[0]?.tecnica?.email || null,
+        tecnicas: slotsPreenchidos.map((s) => ({ nome: s.tecnica?.nome || '—', email: s.tecnica?.email || null, meetLink: s.meetLink || null })),
         dataHora,
         endereco,
         meetLink,
-        meetLink2,
         solicitacao: solicitacaoParaEmail
       });
     }
@@ -1151,12 +1164,21 @@ export function renderPainelJulia(container) {
         btn.addEventListener('click', () => reatribuirTecnica(item, select.value, msgEl, btn));
       });
 
-      queueEl.querySelectorAll('[data-segunda-tecnica-salvar]').forEach((btn) => {
-        const itemId = btn.dataset.segundaTecnicaSalvar;
+      queueEl.querySelectorAll('[data-slot-tecnica-salvar]').forEach((btn) => {
+        const itemId = btn.dataset.slotTecnicaSalvar;
+        const sufixo = btn.dataset.slotSufixo;
         const item = itens.find((i) => i._id === itemId);
-        const select = queueEl.querySelector(`[data-segunda-tecnica-select="${itemId}"]`);
-        const msgEl = queueEl.querySelector(`#msg-segunda-tecnica-${itemId}`);
-        btn.addEventListener('click', () => salvarSegundaTecnica(item, select.value, msgEl, btn));
+        const select = queueEl.querySelector(`[data-slot-tecnica-select="${itemId}"][data-slot-sufixo="${sufixo}"]`);
+        const msgEl = queueEl.querySelector(`#msg-slot-tecnica-${itemId}-${sufixo}`);
+        btn.addEventListener('click', () => salvarSlotTecnica(item, sufixo, select.value, msgEl, btn));
+      });
+
+      queueEl.querySelectorAll('[data-add-nova-tecnica]').forEach((btn) => {
+        const itemId = btn.dataset.addNovaTecnica;
+        btn.addEventListener('click', () => {
+          garantirEstadoHistorico(itemId).mostrarNovaTecnica = true;
+          renderFila();
+        });
       });
       return;
     }
@@ -1181,40 +1203,32 @@ export function renderPainelJulia(container) {
       });
     });
 
-    queueEl.querySelectorAll('[data-select-tecnica]').forEach((select) => {
-      const itemId = select.dataset.selectTecnica;
+    queueEl.querySelectorAll('[data-select-tecnica-slot]').forEach((select) => {
+      const itemId = select.dataset.selectTecnicaSlot;
+      const slot = Number(select.dataset.slot);
       const item = pendentes.find((p) => p._id === itemId);
       select.addEventListener('change', () => {
-        garantirEstado(item).tecnicaId = select.value;
+        garantirEstado(item).tecnicaIds[slot] = select.value;
         renderFila();
       });
     });
 
-    queueEl.querySelectorAll('[data-select-tecnica2]').forEach((select) => {
-      const itemId = select.dataset.selectTecnica2;
-      const item = pendentes.find((p) => p._id === itemId);
-      select.addEventListener('change', () => {
-        garantirEstado(item).tecnicaId2 = select.value;
-        renderFila();
-      });
-    });
-
-    queueEl.querySelectorAll('[data-add-segunda-tecnica]').forEach((btn) => {
-      const itemId = btn.dataset.addSegundaTecnica;
-      const item = pendentes.find((p) => p._id === itemId);
-      btn.addEventListener('click', () => {
-        garantirEstado(item).mostrarSegundaTecnica = true;
-        renderFila();
-      });
-    });
-
-    queueEl.querySelectorAll('[data-remover-segunda-tecnica]').forEach((btn) => {
-      const itemId = btn.dataset.removerSegundaTecnica;
+    queueEl.querySelectorAll('[data-add-tecnica-slot]').forEach((btn) => {
+      const itemId = btn.dataset.addTecnicaSlot;
       const item = pendentes.find((p) => p._id === itemId);
       btn.addEventListener('click', () => {
         const estado = garantirEstado(item);
-        estado.mostrarSegundaTecnica = false;
-        estado.tecnicaId2 = '';
+        if (estado.tecnicaIds.length < MAX_TECNICAS) estado.tecnicaIds.push('');
+        renderFila();
+      });
+    });
+
+    queueEl.querySelectorAll('[data-remover-slot]').forEach((btn) => {
+      const itemId = btn.dataset.removerSlot;
+      const slot = Number(btn.dataset.slot);
+      const item = pendentes.find((p) => p._id === itemId);
+      btn.addEventListener('click', () => {
+        garantirEstado(item).tecnicaIds.splice(slot, 1);
         renderFila();
       });
     });

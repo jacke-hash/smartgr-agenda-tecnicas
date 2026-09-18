@@ -7,6 +7,15 @@ import { notificarRecusaTecnica } from '../utils/notificar.js';
 
 const COLECOES = ['solicitacoes_consumidor_final', 'solicitacoes_revenda', 'solicitacoes_workshop'];
 
+// Espelha frontend/src/pages/painel-julia.js (mesmos sufixos/ordinais) — até
+// 5 técnicas no mesmo evento, sufixo '' é sempre a principal.
+const SUFIXOS_TECNICA = ['', '2', '3', '4', '5'];
+const ORDINAL_TECNICA = ['1ª', '2ª', '3ª', '4ª', '5ª'];
+
+function campo(nomeBase, sufixo) {
+  return `${nomeBase}${sufixo}`;
+}
+
 // Só os 3 status que o sistema realmente tem hoje — sem inventar um estágio
 // "concluído" que não existe em nenhum outro lugar do código.
 const STATUS_LABEL = { pendente: 'Pendente', aprovado: 'Aprovado', recusado: 'Recusado' };
@@ -31,24 +40,22 @@ async function carregarPorCampo(campo, valor) {
   return resultados.flat().sort(porCriadoEmDesc);
 }
 
-// Treinamento pode ter 2ª técnica opcional (frontend/src/pages/painel-julia.js,
-// "+ Atribuir outra técnica") — busca as duas listas (tecnicaEmail e
-// tecnicaEmail2) e junta, marcando em qual "slot" essa pessoa está, pra saber
-// depois quais campos limpar se ela recusar.
+// Treinamento pode ter até 5 técnicas (frontend/src/pages/painel-julia.js,
+// "+ Adicionar nova técnica") — busca a lista de cada slot (tecnicaEmail,
+// tecnicaEmail2..5) e junta, marcando em qual sufixo essa pessoa está, pra
+// saber depois quais campos limpar se ela recusar. Uma pessoa só deveria
+// aparecer em UM slot de um mesmo evento (a UI não deixa duplicar), mas o
+// "vistos" garante que ela não apareça 2x na lista mesmo assim.
 async function carregarAtribuidos(email) {
-  const [primarios, secundarios] = await Promise.all([
-    carregarPorCampo('tecnicaEmail', email),
-    carregarPorCampo('tecnicaEmail2', email)
-  ]);
+  const porSlot = await Promise.all(SUFIXOS_TECNICA.map((sufixo) => carregarPorCampo(campo('tecnicaEmail', sufixo), email)));
   const vistos = new Set();
   const combinados = [];
-  primarios.forEach((item) => {
-    vistos.add(item._id);
-    combinados.push({ ...item, _meuSlot: 'primaria' });
-  });
-  secundarios.forEach((item) => {
-    if (vistos.has(item._id)) return;
-    combinados.push({ ...item, _meuSlot: 'secundaria' });
+  porSlot.forEach((itens, i) => {
+    itens.forEach((item) => {
+      if (vistos.has(item._id)) return;
+      vistos.add(item._id);
+      combinados.push({ ...item, _meuSufixo: SUFIXOS_TECNICA[i] });
+    });
   });
   return combinados.sort(porCriadoEmDesc);
 }
@@ -173,11 +180,11 @@ export function renderMinhasSolicitacoes(container, navigate, user) {
     });
   }
 
-  // Recusa só o SEU pedaço do treinamento: se havia 2ª técnica, a outra
-  // continua com o evento dela intacto (evento próprio por técnica — mesmo
-  // padrão já usado pra Nayra em painel-julia.js). Sem promover ninguém pro
-  // lugar vazio automaticamente — a Julia reatribui pela aba "Aprovadas" do
-  // painel dela, igual já faz hoje pra qualquer troca de técnica.
+  // Recusa só o SEU pedaço do treinamento: se havia outras técnicas, elas
+  // continuam com os eventos delas intactos (evento próprio por técnica —
+  // mesmo padrão já usado pra Nayra em painel-julia.js). Sem promover
+  // ninguém pro lugar vazio automaticamente — a Julia reatribui pela aba
+  // "Aprovadas" do painel dela, igual já faz hoje pra qualquer troca.
   async function recusarComoTecnica(item, btnEl) {
     const msgEl = container.querySelector(`#msg-recusar-${item._id}`);
     msgEl.innerHTML = '';
@@ -192,8 +199,8 @@ export function renderMinhasSolicitacoes(container, navigate, user) {
     btnEl.disabled = true;
     btnEl.textContent = 'Recusando...';
 
-    const ehPrimaria = item._meuSlot === 'primaria';
-    const eventId = ehPrimaria ? item.googleEventId : item.googleEventId2;
+    const sufixo = item._meuSufixo;
+    const eventId = item[campo('googleEventId', sufixo)];
     const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
 
     if (calendarWorkerUrl && eventId && minhaTecnicaId) {
@@ -208,9 +215,13 @@ export function renderMinhasSolicitacoes(container, navigate, user) {
       }
     }
 
-    const camposSlot = ehPrimaria
-      ? { tecnicaAtribuida: null, tecnicaEmail: null, googleEventId: null, googleEventLink: null, googleMeetLink: null }
-      : { tecnicaAtribuida2: null, tecnicaEmail2: null, googleEventId2: null, googleEventLink2: null, googleMeetLink2: null };
+    const camposSlot = {
+      [campo('tecnicaAtribuida', sufixo)]: null,
+      [campo('tecnicaEmail', sufixo)]: null,
+      [campo('googleEventId', sufixo)]: null,
+      [campo('googleEventLink', sufixo)]: null,
+      [campo('googleMeetLink', sufixo)]: null
+    };
 
     try {
       await updateDoc(doc(db, item._colecao, item._id), {
@@ -218,7 +229,8 @@ export function renderMinhasSolicitacoes(container, navigate, user) {
         recusasTecnica: arrayUnion({
           tecnicaNome: user.displayName || user.email,
           tecnicaEmail: user.email,
-          slot: item._meuSlot,
+          slot: sufixo,
+          slotLabel: `${ORDINAL_TECNICA[SUFIXOS_TECNICA.indexOf(sufixo)]} técnica`,
           motivo: motivoLimpo,
           em: new Date().toISOString()
         })

@@ -146,31 +146,51 @@ service cloud.firestore {
         : todasOpcoesPeriodoOk(dados.opcoesData, diasMinimos);
     }
 
+    // Até 5 técnicas no mesmo evento (frontend/src/pages/painel-julia.js,
+    // "+ Adicionar nova técnica") — sufixo '' é a principal (compatível com
+    // documentos antigos), '2'..'5' são as extras. Mesma lista em
+    // frontend/src/pages/painel-julia.js e minhas-solicitacoes.js (SUFIXOS_TECNICA)
+    // — mudar aqui sem mudar lá quebra a recusa/leitura pros slots novos.
+    function ehDonaDoSlot(dados, sufixo) {
+      let campoEmail = 'tecnicaEmail' + sufixo;
+      return (campoEmail in dados) && dados[campoEmail] == request.auth.token.email;
+    }
+
     // Técnica recusando o PRÓPRIO treinamento já aprovado (fora do
     // expediente — fim de semana/feriado/fora 08:30-17:30, checado no
     // frontend em utils/expediente.js). Só pode zerar o slot que é dela
-    // (primário: tecnicaEmail/tecnicaAtribuida..., ou secundário: os mesmos
-    // campos com sufixo "2", pra quando há 2ª técnica opcional atribuída ao
-    // mesmo evento) e anexar o registro em recusasTecnica — nada mais no
-    // documento pode mudar nessa via. Qualquer outra alteração (reatribuir,
-    // mudar status, opcoesData etc.) continua exclusiva da Julia.
+    // (tecnicaEmail{sufixo}/tecnicaAtribuida{sufixo}/googleEvent...{sufixo})
+    // e anexar o registro em recusasTecnica — nada mais no documento pode
+    // mudar nessa via. Qualquer outra alteração (reatribuir, mudar status,
+    // opcoesData etc.) continua exclusiva da Julia.
+    function recusaValidaDoSlot(dadosAntigos, dadosNovos, sufixo, chaves) {
+      return ehDonaDoSlot(dadosAntigos, sufixo)
+        && chaves.hasOnly([
+          'tecnicaAtribuida' + sufixo, 'tecnicaEmail' + sufixo,
+          'googleEventId' + sufixo, 'googleEventLink' + sufixo, 'googleMeetLink' + sufixo,
+          'recusasTecnica'
+        ])
+        && dadosNovos['tecnicaEmail' + sufixo] == null
+        && dadosNovos['tecnicaAtribuida' + sufixo] == null;
+    }
+
     function recusaValidaDaTecnica(dadosAntigos, dadosNovos) {
       let chaves = request.resource.data.diff(resource.data).affectedKeys();
-      let primaria = ('tecnicaEmail' in dadosAntigos) && dadosAntigos.tecnicaEmail == request.auth.token.email;
-      let secundaria = ('tecnicaEmail2' in dadosAntigos) && dadosAntigos.tecnicaEmail2 == request.auth.token.email;
       return isSmartGRUser()
         && dadosAntigos.status == 'aprovado' && dadosNovos.status == 'aprovado'
         && (
-          (primaria
-            && chaves.hasOnly(['tecnicaAtribuida', 'tecnicaEmail', 'googleEventId', 'googleEventLink', 'googleMeetLink', 'recusasTecnica'])
-            && dadosNovos.tecnicaEmail == null
-            && dadosNovos.tecnicaAtribuida == null)
-          ||
-          (secundaria
-            && chaves.hasOnly(['tecnicaAtribuida2', 'tecnicaEmail2', 'googleEventId2', 'googleEventLink2', 'googleMeetLink2', 'recusasTecnica'])
-            && dadosNovos.tecnicaEmail2 == null
-            && dadosNovos.tecnicaAtribuida2 == null)
+          recusaValidaDoSlot(dadosAntigos, dadosNovos, '', chaves) ||
+          recusaValidaDoSlot(dadosAntigos, dadosNovos, '2', chaves) ||
+          recusaValidaDoSlot(dadosAntigos, dadosNovos, '3', chaves) ||
+          recusaValidaDoSlot(dadosAntigos, dadosNovos, '4', chaves) ||
+          recusaValidaDoSlot(dadosAntigos, dadosNovos, '5', chaves)
         );
+    }
+
+    // Pra regra de leitura: dona de QUALQUER um dos 5 slots.
+    function ehDonaDeAlgumSlot(dados) {
+      return ehDonaDoSlot(dados, '') || ehDonaDoSlot(dados, '2') || ehDonaDoSlot(dados, '3')
+        || ehDonaDoSlot(dados, '4') || ehDonaDoSlot(dados, '5');
     }
 
     // Só leitura para o client. Escrita (inclusive token OAuth) só via Admin SDK
@@ -189,8 +209,7 @@ service cloud.firestore {
       // própria solicitação — não a fila inteira.
       allow read: if isAprovador()
         || (isSmartGRUser() && resource.data.vendedorEmail == request.auth.token.email)
-        || (isSmartGRUser() && resource.data.tecnicaEmail == request.auth.token.email)
-        || (isSmartGRUser() && ('tecnicaEmail2' in resource.data) && resource.data.tecnicaEmail2 == request.auth.token.email);
+        || (isSmartGRUser() && ehDonaDeAlgumSlot(resource.data));
       allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data, 7);
       allow update: if isAprovador() || recusaValidaDaTecnica(resource.data, request.resource.data);
       allow delete: if false;
@@ -202,8 +221,7 @@ service cloud.firestore {
       // própria solicitação — não a fila inteira.
       allow read: if isAprovador()
         || (isSmartGRUser() && resource.data.vendedorEmail == request.auth.token.email)
-        || (isSmartGRUser() && resource.data.tecnicaEmail == request.auth.token.email)
-        || (isSmartGRUser() && ('tecnicaEmail2' in resource.data) && resource.data.tecnicaEmail2 == request.auth.token.email);
+        || (isSmartGRUser() && ehDonaDeAlgumSlot(resource.data));
       allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data, 7);
       allow update: if isAprovador() || recusaValidaDaTecnica(resource.data, request.resource.data);
       allow delete: if false;
@@ -215,8 +233,7 @@ service cloud.firestore {
       // própria solicitação — não a fila inteira.
       allow read: if isAprovador()
         || (isSmartGRUser() && resource.data.vendedorEmail == request.auth.token.email)
-        || (isSmartGRUser() && resource.data.tecnicaEmail == request.auth.token.email)
-        || (isSmartGRUser() && ('tecnicaEmail2' in resource.data) && resource.data.tecnicaEmail2 == request.auth.token.email);
+        || (isSmartGRUser() && ehDonaDeAlgumSlot(resource.data));
       allow create: if isSmartGRUser() && todasOpcoesDataOk(request.resource.data, 7);
       allow update: if isAprovador() || recusaValidaDaTecnica(resource.data, request.resource.data);
       allow delete: if false;

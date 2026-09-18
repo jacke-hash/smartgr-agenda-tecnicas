@@ -171,14 +171,17 @@ async function handleNotificarAprovacao(request, env, headers) {
     modalidade,
     tecnicaNome,
     tecnicaEmail,
-    tecnicaNome2,
-    tecnicaEmail2,
+    // Até 5 técnicas no mesmo evento (frontend/src/pages/painel-julia.js,
+    // "+ Adicionar nova técnica") — cada uma com seu próprio e-mail/Meet
+    // (evento próprio por técnica). tecnicaNome/tecnicaEmail continuam como
+    // alias da 1ª entrada (compatibilidade com quem só lia esse formato).
+    tecnicas,
     dataHora,
     endereco,
     meetLink,
-    meetLink2,
     solicitacao
   } = body;
+  const listaTecnicas = Array.isArray(tecnicas) && tecnicas.length ? tecnicas : [{ nome: tecnicaNome, email: tecnicaEmail, meetLink }];
 
   if (!vendedorEmail || !tipo || !tecnicaNome || !dataHora) {
     return json(
@@ -200,8 +203,8 @@ async function handleNotificarAprovacao(request, env, headers) {
         : `<li><strong>Link da reunião (Google Meet):</strong> [DEBUG: meetLink recebido = ${JSON.stringify(meetLink)}]</li>`
       : '';
 
-  const labelTecnicaResponsavel = tecnicaNome2 ? 'Técnicas responsáveis' : 'Técnica responsável';
-  const nomesTecnicas = tecnicaNome2 ? `${tecnicaNome} e ${tecnicaNome2}` : tecnicaNome;
+  const labelTecnicaResponsavel = listaTecnicas.length > 1 ? 'Técnicas responsáveis' : 'Técnica responsável';
+  const nomesTecnicas = listaTecnicas.map((t) => t.nome).join(', ');
 
   await enviarEmail(env, {
     to: vendedorEmail,
@@ -240,45 +243,29 @@ async function handleNotificarAprovacao(request, env, headers) {
     });
   }
 
-  if (tecnicaEmail) {
-    const nomeSolicitanteLabel = vendedorNome || tecnicaNome;
-    await enviarEmail(env, {
-      to: tecnicaEmail,
-      subject: `Novo treinamento atribuído a você: ${tipoLabel} — ${solicitacao?.vendedor || solicitacao?.vendedorAcompanha || solicitacao?.localInstituicao || solicitacao?.nomeRevenda || nomeSolicitanteLabel}`,
-      html: `
-        <p>Olá${tecnicaNome ? ` ${tecnicaNome}` : ''},</p>
-        <p>Você foi designada para um novo treinamento (${tipoLabel}). Consulte os dados abaixo e confira sua agenda para se programar.</p>
-        <ul>
-          ${formatarCamposSolicitacao(tipo, solicitacao)}
-          <li><strong>Data:</strong> ${formatarLinhaData(dataHora, tipoReserva)}</li>
-          <li><strong>Local:</strong> ${local}</li>
-          ${linhaMeet}
-        </ul>
-      `
-    });
-  }
-
-  // 2ª técnica opcional (frontend/src/pages/painel-julia.js, botão "+
-  // Atribuir outra técnica") — recebe o mesmo aviso, cada uma com o próprio
-  // link de Meet (cada uma tem seu próprio evento/sala, criados em chamadas
-  // separadas ao worker de calendar).
-  if (tecnicaEmail2) {
-    const nomeSolicitanteLabel = vendedorNome || tecnicaNome2;
-    const linhaMeet2 =
-      modalidade === 'online' && meetLink2
-        ? `<li><strong>Link da reunião (Google Meet):</strong> <a href="${meetLink2}">${meetLink2}</a></li>`
+  // Uma técnica por entrada de `listaTecnicas` (até 5) — cada uma recebe o
+  // mesmo aviso, com o próprio link de Meet (evento/sala próprios, criados
+  // em chamadas separadas ao worker de calendar). Quando há mais de uma, o
+  // e-mail dela cita as colegas também designadas.
+  for (const t of listaTecnicas) {
+    if (!t.email) continue;
+    const nomeSolicitanteLabel = vendedorNome || t.nome;
+    const outrasNomes = listaTecnicas.filter((outra) => outra !== t).map((outra) => outra.nome);
+    const linhaMeetTecnica =
+      modalidade === 'online' && t.meetLink
+        ? `<li><strong>Link da reunião (Google Meet):</strong> <a href="${t.meetLink}">${t.meetLink}</a></li>`
         : '';
     await enviarEmail(env, {
-      to: tecnicaEmail2,
+      to: t.email,
       subject: `Novo treinamento atribuído a você: ${tipoLabel} — ${solicitacao?.vendedor || solicitacao?.vendedorAcompanha || solicitacao?.localInstituicao || solicitacao?.nomeRevenda || nomeSolicitanteLabel}`,
       html: `
-        <p>Olá${tecnicaNome2 ? ` ${tecnicaNome2}` : ''},</p>
-        <p>Você foi designada (junto com ${tecnicaNome}) para um novo treinamento (${tipoLabel}). Consulte os dados abaixo e confira sua agenda para se programar.</p>
+        <p>Olá${t.nome ? ` ${t.nome}` : ''},</p>
+        <p>Você foi designada${outrasNomes.length ? ` (junto com ${outrasNomes.join(', ')})` : ''} para um novo treinamento (${tipoLabel}). Consulte os dados abaixo e confira sua agenda para se programar.</p>
         <ul>
           ${formatarCamposSolicitacao(tipo, solicitacao)}
           <li><strong>Data:</strong> ${formatarLinhaData(dataHora, tipoReserva)}</li>
           <li><strong>Local:</strong> ${local}</li>
-          ${linhaMeet2}
+          ${linhaMeetTecnica}
         </ul>
       `
     });
