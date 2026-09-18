@@ -287,6 +287,45 @@ async function handleNotificarAprovacao(request, env, headers) {
   return json({ status: 'ok' }, 200, headers);
 }
 
+// 2ª técnica adicionada a um treinamento JÁ aprovado (painel da Julia, aba
+// "Aprovadas") — mesmo conteúdo do e-mail "novo treinamento atribuído" que
+// handleNotificarAprovacao manda na aprovação original, só que disparado
+// numa chamada separada porque aqui não existe vendedor/1ª técnica pra
+// notificar de novo.
+async function handleNotificarTecnicaAdicionada(request, env, headers) {
+  const body = await request.json();
+  const { tecnicaEmail, tecnicaNome, tipo, tipoReserva, modalidade, dataHora, endereco, meetLink, vendedorNome, solicitacao } = body;
+
+  if (!tecnicaEmail || !tipo || !dataHora) {
+    return json({ status: 'error', message: 'tecnicaEmail, tipo e dataHora são obrigatórios' }, 400, headers);
+  }
+
+  const tipoLabel = TIPO_LABEL[tipo] || tipo;
+  const local = modalidade === 'online' ? 'Online' : formatEndereco(endereco) || 'A confirmar';
+  const linhaMeet =
+    modalidade === 'online' && meetLink
+      ? `<li><strong>Link da reunião (Google Meet):</strong> <a href="${meetLink}">${meetLink}</a></li>`
+      : '';
+  const nomeSolicitanteLabel = vendedorNome || tecnicaNome;
+
+  await enviarEmail(env, {
+    to: tecnicaEmail,
+    subject: `Você foi adicionada a um treinamento: ${tipoLabel} — ${solicitacao?.vendedor || solicitacao?.vendedorAcompanha || solicitacao?.localInstituicao || solicitacao?.nomeRevenda || nomeSolicitanteLabel}`,
+    html: `
+      <p>Olá${tecnicaNome ? ` ${tecnicaNome}` : ''},</p>
+      <p>Você foi adicionada como 2ª técnica num treinamento (${tipoLabel}) já aprovado. Consulte os dados abaixo e confira sua agenda para se programar.</p>
+      <ul>
+        ${formatarCamposSolicitacao(tipo, solicitacao)}
+        <li><strong>Data:</strong> ${formatarLinhaData(dataHora, tipoReserva)}</li>
+        <li><strong>Local:</strong> ${local}</li>
+        ${linhaMeet}
+      </ul>
+    `
+  });
+
+  return json({ status: 'ok' }, 200, headers);
+}
+
 async function handleNotificarRecusaTecnica(request, env, headers) {
   const body = await request.json();
   const { tecnicaNome, tipo, tipoReserva, dataHora, motivo, vendedorNome, painelUrl } = body;
@@ -364,6 +403,9 @@ export default {
       }
       if (url.pathname === '/notificar-recusa-tecnica' && request.method === 'POST') {
         return await handleNotificarRecusaTecnica(request, env, headers);
+      }
+      if (url.pathname === '/notificar-tecnica-adicionada' && request.method === 'POST') {
+        return await handleNotificarTecnicaAdicionada(request, env, headers);
       }
     } catch (err) {
       console.error('erro não tratado:', err.stack || err.message || err);

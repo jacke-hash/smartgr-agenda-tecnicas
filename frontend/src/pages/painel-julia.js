@@ -10,7 +10,7 @@ import {
   getDocs
 } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
-import { notificarAprovacao, notificarRecusa } from '../utils/notificar.js';
+import { notificarAprovacao, notificarRecusa, notificarTecnicaAdicionada } from '../utils/notificar.js';
 import { formatarDataBR, formatarDataEscolhida } from '../utils/date-options.js';
 import { TAG_TIPO, formatDataHora } from '../utils/tipo-labels.js';
 
@@ -484,6 +484,20 @@ export function renderPainelJulia(container) {
             <button class="btn btn-approve" data-reatribuir-salvar="${item._id}">Salvar nova técnica</button>
           </div>
           <div id="msg-reatribuir-${item._id}"></div>
+          <div class="subhead">2ª técnica (opcional)</div>
+          <div class="assign-row">
+            <div class="field">
+              <select data-segunda-tecnica-select="${item._id}">
+                <option value="">Nenhuma</option>
+                ${tecnicas
+                  .filter((t) => t.id !== item.tecnicaAtribuida)
+                  .map((t) => `<option value="${t.id}" ${t.id === item.tecnicaAtribuida2 ? 'selected' : ''}>${t.nome}</option>`)
+                  .join('')}
+              </select>
+            </div>
+            <button class="btn btn-approve" data-segunda-tecnica-salvar="${item._id}">${tecnica2 ? 'Salvar 2ª técnica' : 'Atribuir 2ª técnica'}</button>
+          </div>
+          <div id="msg-segunda-tecnica-${item._id}"></div>
           `
               : ''
           }
@@ -649,6 +663,209 @@ export function renderPainelJulia(container) {
     msgEl.innerHTML = `<div class="success-note">Reatribuído para ${novaTecnica?.nome || 'nova técnica'} com sucesso.</div>`;
     btnEl.disabled = false;
     btnEl.textContent = 'Salvar nova técnica';
+  }
+
+  // Adiciona/troca/remove a 2ª técnica de um treinamento JÁ aprovado — o
+  // "+ Atribuir outra técnica" da aprovação inicial (aprovar()) só cobre
+  // quem já estava no card pendente; isso cobre o caso de precisar reforçar
+  // com uma 2ª técnica depois que já virou evento. Evento próprio por
+  // técnica, mesmo padrão de sempre (Nayra/2ª técnica na aprovação).
+  async function salvarSegundaTecnica(item, novoTecnicaId2, msgEl, btnEl) {
+    msgEl.innerHTML = '';
+
+    if (novoTecnicaId2 === (item.tecnicaAtribuida2 || '')) {
+      msgEl.innerHTML = `<div class="error-note">Nenhuma mudança pra salvar.</div>`;
+      return;
+    }
+    if (!item.dataEscolhida) {
+      msgEl.innerHTML = `<div class="error-note">Solicitação sem data escolhida — não é possível atribuir 2ª técnica.</div>`;
+      return;
+    }
+
+    const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
+    const tecnicaAntigaId2 = item.tecnicaAtribuida2;
+    const eventIdAntigo2 = item.googleEventId2;
+
+    btnEl.disabled = true;
+
+    // Removendo a 2ª técnica (selecionou "Nenhuma") — só apaga o evento dela
+    // e limpa o slot, sem criar nada novo.
+    if (!novoTecnicaId2) {
+      btnEl.textContent = 'Removendo...';
+      if (calendarWorkerUrl && eventIdAntigo2 && tecnicaAntigaId2) {
+        try {
+          await fetch(`${calendarWorkerUrl}/escala/excluir-evento`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tecnicaId: tecnicaAntigaId2, eventId: eventIdAntigo2 })
+          });
+        } catch (err) {
+          console.error('2ª técnica: falha ao excluir evento antigo, seguindo mesmo assim:', err.message);
+        }
+      }
+      await updateDoc(doc(db, item._colecao, item._id), {
+        tecnicaAtribuida2: null,
+        tecnicaEmail2: null,
+        googleEventId2: null,
+        googleEventLink2: null,
+        googleMeetLink2: null
+      });
+      Object.assign(item, {
+        tecnicaAtribuida2: null,
+        tecnicaEmail2: null,
+        googleEventId2: null,
+        googleEventLink2: null,
+        googleMeetLink2: null
+      });
+      msgEl.innerHTML = `<div class="success-note">2ª técnica removida.</div>`;
+      btnEl.disabled = false;
+      btnEl.textContent = 'Atribuir 2ª técnica';
+      return;
+    }
+
+    btnEl.textContent = 'Verificando disponibilidade...';
+    if (calendarWorkerUrl) {
+      try {
+        const respCheck = await fetch(`${calendarWorkerUrl}/verificar-conflitos`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tecnicaIds: [novoTecnicaId2],
+            opcoesData: [item.dataEscolhida],
+            tipoReserva: item.tipoReserva || 'unico',
+            solicitacaoId: item._id
+          })
+        });
+        if (respCheck.ok) {
+          const { conflitos } = await respCheck.json();
+          const status = conflitos?.[novoTecnicaId2]?.[0];
+          if (status?.conflito || status?.folga) {
+            const detalhe = status?.eventoConflitante ? ` — ${formatarEventoConflitante(status.eventoConflitante)}` : '';
+            msgEl.innerHTML = `<div class="error-note">${
+              status.folga
+                ? `😴 Técnica está de folga nesse horário (trabalhou no domingo anterior)${detalhe}.`
+                : `⚠️ Técnica tem conflito de agenda nesse horário${detalhe}.`
+            } Escolha outra técnica.</div>`;
+            btnEl.disabled = false;
+            btnEl.textContent = item.tecnicaAtribuida2 ? 'Salvar 2ª técnica' : 'Atribuir 2ª técnica';
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('2ª técnica: falha ao checar conflito, seguindo mesmo assim:', err.message);
+      }
+    }
+
+    const novaTecnica2 = tecnicas.find((t) => t.id === novoTecnicaId2);
+    const revendaCliente = item.tipo === 'revenda' && item.destinoTreinamento === 'cliente_revenda';
+    const modalidade = item.tipo === 'workshop' ? 'presencial' : revendaCliente ? item.tipoTreinamentoCliente : item.modalidade;
+    const endereco = revendaCliente ? item.enderecoCliente || null : item.endereco || null;
+    const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
+    const {
+      _id,
+      _colecao,
+      criadoEm,
+      slaExpiraEm,
+      aprovadoEm,
+      tecnicaAtribuida,
+      status,
+      opcoesData,
+      dataEscolhida,
+      googleEventId,
+      googleEventLink,
+      googleMeetLink,
+      ...solicitacaoParaEmail
+    } = item;
+
+    if (calendarWorkerUrl && eventIdAntigo2 && tecnicaAntigaId2) {
+      btnEl.textContent = 'Removendo evento antigo...';
+      try {
+        await fetch(`${calendarWorkerUrl}/escala/excluir-evento`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tecnicaId: tecnicaAntigaId2, eventId: eventIdAntigo2 })
+        });
+      } catch (err) {
+        console.error('2ª técnica: falha ao excluir evento antigo, seguindo mesmo assim:', err.message);
+      }
+    }
+
+    let meetLink2 = null;
+    let googleEventId2Novo = null;
+    let googleEventLink2Novo = null;
+    if (calendarWorkerUrl) {
+      btnEl.textContent = 'Criando evento na agenda dela...';
+      try {
+        const respCriar = await fetch(`${calendarWorkerUrl}/criar-evento`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tecnicaId: novoTecnicaId2,
+            tipo: item.tipo,
+            tipoTreinamento: item.tipoTreinamento || null,
+            tipoReserva: item.tipoReserva || 'unico',
+            modalidade,
+            endereco,
+            unidade: item.unidade || null,
+            nomeSolicitante,
+            dataHora: item.dataEscolhida,
+            solicitacao: solicitacaoParaEmail
+          })
+        });
+        const resultadoCriar = await respCriar.json();
+        if (respCriar.ok) {
+          googleEventId2Novo = resultadoCriar.eventId;
+          googleEventLink2Novo = resultadoCriar.htmlLink;
+          meetLink2 = resultadoCriar.meetLink || null;
+        } else {
+          msgEl.innerHTML = `<div class="error-note">Falha ao criar evento na agenda da 2ª técnica: ${resultadoCriar.message || 'erro desconhecido'}.</div>`;
+          btnEl.disabled = false;
+          btnEl.textContent = item.tecnicaAtribuida2 ? 'Salvar 2ª técnica' : 'Atribuir 2ª técnica';
+          return;
+        }
+      } catch (err) {
+        msgEl.innerHTML = `<div class="error-note">Falha ao criar evento na agenda da 2ª técnica: ${err.message}.</div>`;
+        btnEl.disabled = false;
+        btnEl.textContent = item.tecnicaAtribuida2 ? 'Salvar 2ª técnica' : 'Atribuir 2ª técnica';
+        return;
+      }
+    }
+
+    await updateDoc(doc(db, item._colecao, item._id), {
+      tecnicaAtribuida2: novoTecnicaId2,
+      tecnicaEmail2: novaTecnica2?.email || null,
+      googleEventId2: googleEventId2Novo,
+      googleEventLink2: googleEventLink2Novo,
+      googleMeetLink2: meetLink2
+    });
+
+    Object.assign(item, {
+      tecnicaAtribuida2: novoTecnicaId2,
+      tecnicaEmail2: novaTecnica2?.email || null,
+      googleEventId2: googleEventId2Novo,
+      googleEventLink2: googleEventLink2Novo,
+      googleMeetLink2: meetLink2
+    });
+
+    if (novaTecnica2?.email) {
+      notificarTecnicaAdicionada({
+        tecnicaEmail: novaTecnica2.email,
+        tecnicaNome: novaTecnica2.nome,
+        tipo: item.tipo,
+        tipoTreinamento: item.tipoTreinamento || null,
+        tipoReserva: item.tipoReserva || 'unico',
+        modalidade,
+        dataHora: item.dataEscolhida,
+        endereco,
+        meetLink: meetLink2,
+        vendedorNome: nomeSolicitante,
+        solicitacao: solicitacaoParaEmail
+      });
+    }
+
+    msgEl.innerHTML = `<div class="success-note">2ª técnica: ${novaTecnica2?.nome || '—'} atribuída com sucesso.</div>`;
+    btnEl.disabled = false;
+    btnEl.textContent = 'Salvar 2ª técnica';
   }
 
   async function carregarHistorico(status) {
@@ -932,6 +1149,14 @@ export function renderPainelJulia(container) {
         const select = queueEl.querySelector(`[data-reatribuir-select="${itemId}"]`);
         const msgEl = queueEl.querySelector(`#msg-reatribuir-${itemId}`);
         btn.addEventListener('click', () => reatribuirTecnica(item, select.value, msgEl, btn));
+      });
+
+      queueEl.querySelectorAll('[data-segunda-tecnica-salvar]').forEach((btn) => {
+        const itemId = btn.dataset.segundaTecnicaSalvar;
+        const item = itens.find((i) => i._id === itemId);
+        const select = queueEl.querySelector(`[data-segunda-tecnica-select="${itemId}"]`);
+        const msgEl = queueEl.querySelector(`#msg-segunda-tecnica-${itemId}`);
+        btn.addEventListener('click', () => salvarSegundaTecnica(item, select.value, msgEl, btn));
       });
       return;
     }

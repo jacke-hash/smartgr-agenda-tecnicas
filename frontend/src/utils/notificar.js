@@ -66,6 +66,24 @@ export async function notificarRecusaTecnica({ tecnicaNome, tipo, tipoReserva, d
   }
 }
 
+// 2ª técnica adicionada a um treinamento JÁ aprovado (aba "Aprovadas" do
+// painel — salvarSegundaTecnica em painel-julia.js). Só ela recebe e-mail
+// aqui; o vendedor e a 1ª técnica já foram notificados na aprovação original.
+export async function notificarTecnicaAdicionada(payload) {
+  const workerUrl = import.meta.env.VITE_EMAIL_WORKER_URL;
+  if (!workerUrl) return;
+
+  try {
+    await fetch(`${workerUrl}/notificar-tecnica-adicionada`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (err) {
+    console.error('Falha ao notificar 2ª técnica adicionada por e-mail:', err);
+  }
+}
+
 export async function notificarRecusa({ vendedorEmail, vendedorNome, tipo, motivoRecusa }) {
   const workerUrl = import.meta.env.VITE_EMAIL_WORKER_URL;
   if (!workerUrl) return;
