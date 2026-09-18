@@ -78,7 +78,7 @@ export function renderDateOptionsSugeridasHTML(datasDisponiveis) {
     <label class="date-option sugerida" data-idx="${i}" data-pagina="${pagina}" ${pagina === 0 ? '' : 'hidden'}>
       <div class="date-sugerida-topo">
         <input type="checkbox" class="date-sugerida-check" data-idx="${i}" />
-        <span class="opt-label">${formatarDataBR(dataISO)}</span>
+        <span class="opt-label">${formatarDataBRComDiaSemana(dataISO)}</span>
       </div>
       <div class="row">
         <div class="time-pair">
@@ -276,14 +276,35 @@ export function formatarDataBR(dataISO) {
   return `${dia}-${mes}-${ano}`;
 }
 
+const DIA_SEMANA_ABREV = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+// Dia da semana em UTC direto na string ISO (mesmo padrão de
+// frontend/src/pages/escala-tecnicas.js) — dia da semana é propriedade da
+// data civil, não do instante, então não precisa (nem deve) passar pelo fuso
+// do navegador.
+function diaSemanaAbrev(dataISO) {
+  if (!dataISO) return '';
+  return DIA_SEMANA_ABREV[new Date(`${dataISO}T00:00:00Z`).getUTCDay()];
+}
+
+// Mesma formatação de formatarDataBR, só que com o dia da semana junto —
+// pra quem tá escolhendo/vendo a data de uma solicitação não precisar abrir
+// um calendário à parte pra saber se caiu num sábado, por exemplo.
+export function formatarDataBRComDiaSemana(dataISO) {
+  if (!dataISO) return dataISO;
+  const formatada = formatarDataBR(dataISO);
+  const dia = diaSemanaAbrev(dataISO);
+  return dia ? `${formatada} (${dia})` : formatada;
+}
+
 // Formata a data ESCOLHIDA (pós-aprovação) de uma solicitação, único ou
 // período — reaproveitado no painel da Julia e no painel "Minhas
 // Solicitações". Retorna null se ainda não tem dataEscolhida (pendente).
 export function formatarDataEscolhida(item) {
   if (!item.dataEscolhida) return null;
   return item.tipoReserva === 'periodo'
-    ? `${formatarDataBR(item.dataEscolhida.dataInicio)} a ${formatarDataBR(item.dataEscolhida.dataFim)}`
-    : formatarDataBR(item.dataEscolhida.data);
+    ? `${formatarDataBRComDiaSemana(item.dataEscolhida.dataInicio)} a ${formatarDataBRComDiaSemana(item.dataEscolhida.dataFim)}`
+    : formatarDataBRComDiaSemana(item.dataEscolhida.data);
 }
 
 export function destacarOpcoesInvalidas(container, indicesInvalidos) {

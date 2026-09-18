@@ -11,7 +11,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
 import { notificarAprovacao, notificarRecusa, notificarTecnicaAdicionada } from '../utils/notificar.js';
-import { formatarDataBR, formatarDataEscolhida } from '../utils/date-options.js';
+import { formatarDataBRComDiaSemana, formatarDataEscolhida } from '../utils/date-options.js';
 import { TAG_TIPO, formatDataHora } from '../utils/tipo-labels.js';
 
 const COLECOES = ['solicitacoes_consumidor_final', 'solicitacoes_revenda', 'solicitacoes_workshop'];
@@ -234,8 +234,8 @@ export function renderPainelJulia(container) {
             const conflitantes = tecnicasComConflitoEm(estado, idx);
             const emFolga = tecnicasComFolgaEm(estado, idx);
             const linhaData = ehPeriodo
-              ? `${formatarDataBR(opt.dataInicio)} a ${formatarDataBR(opt.dataFim)}`
-              : formatarDataBR(opt.data);
+              ? `${formatarDataBRComDiaSemana(opt.dataInicio)} a ${formatarDataBRComDiaSemana(opt.dataFim)}`
+              : formatarDataBRComDiaSemana(opt.data);
             return `
           <div class="date-pick ${estado.dataEscolhidaIdx === idx ? 'chosen' : ''}" data-idx="${idx}">
             <div class="d">${linhaData}</div>
