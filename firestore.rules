@@ -30,7 +30,7 @@ service cloud.firestore {
     function ehTecnica() {
       return isSmartGRUser() && request.auth.token.email in [
         'fernanda@smartgr.com.br',
-        'marianacruz@smartgr.com.br',
+        'mariana.cruz@smartgr.com.br',
         'vithoria@smartgr.com.br',
         'eloah@smartgr.com.br',
         'julia@smartgr.com.br'

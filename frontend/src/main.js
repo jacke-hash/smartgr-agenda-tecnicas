@@ -37,7 +37,7 @@ const ADMINS_PAINEL = ['julia@smartgr.com.br', 'jacke@smartgr.com.br'];
 // (Firestore Rules não faz query por campo, só get() por id conhecido).
 const TECNICAS_ATIVAS = [
   'fernanda@smartgr.com.br',
-  'marianacruz@smartgr.com.br',
+  'mariana.cruz@smartgr.com.br',
   'vithoria@smartgr.com.br',
   'eloah@smartgr.com.br',
   'julia@smartgr.com.br'

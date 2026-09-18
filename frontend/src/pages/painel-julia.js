@@ -383,8 +383,13 @@ export function renderPainelJulia(container) {
               // já escolhida em OUTRO slot some das opções deste (menos dela
               // mesma, senão o próprio slot "perderia" a seleção).
               const outrosEscolhidos = estado.tecnicaIds.filter((tid, idx) => idx !== i && tid);
+              // Só a principal (slot 0) esconde quem está ocupado — nos
+              // extras, Julia pode oferecer qualquer uma das até 5 técnicas
+              // (com aviso de conflito/folga junto do nome), sem a lista
+              // "esvaziar" e o botão "+" sumir cedo demais quando várias já
+              // têm algo marcado naquele horário.
               const opcoes = tecnicas.filter(
-                (t) => (disponivelNoHorario(t) || t.id === tecnicaIdAtual) && !outrosEscolhidos.includes(t.id)
+                (t) => (i === 0 ? disponivelNoHorario(t) || t.id === tecnicaIdAtual : true) && !outrosEscolhidos.includes(t.id)
               );
               const label = i === 0 ? 'Técnica responsável' : `${ORDINAL_TECNICA[i]} técnica (opcional)`;
               return `
@@ -408,9 +413,11 @@ export function renderPainelJulia(container) {
             }
 
             // Botão só aparece se ainda cabe mais gente (menos de MAX_TECNICAS
-            // slots visíveis) E ainda sobra alguém pra oferecer nesse horário.
+            // slots visíveis) E ainda sobra alguém não escolhido — não exige
+            // disponibilidade aqui (ela já aparece como aviso por slot mais
+            // abaixo), senão o "+" some cedo demais só por conflito de agenda.
             const cabemMaisSlots = estado.tecnicaIds.length < MAX_TECNICAS;
-            const sobraAlguem = tecnicas.some((t) => !estado.tecnicaIds.includes(t.id) && disponivelNoHorario(t));
+            const sobraAlguem = tecnicas.some((t) => !estado.tecnicaIds.includes(t.id));
             const botaoAdicionar =
               cabemMaisSlots && sobraAlguem
                 ? `<button type="button" class="btn btn-secondary" data-add-tecnica-slot="${item._id}">+ Adicionar nova técnica</button>`
