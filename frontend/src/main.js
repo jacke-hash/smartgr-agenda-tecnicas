@@ -43,7 +43,7 @@ function renderShell(user) {
           <button data-rota="#/">Nova solicitação</button>
           <button data-rota="#/minhas-solicitacoes">Minhas Solicitações</button>
           ${podeVerPainel(user) ? `<button data-rota="#/painel">Painel — Julia</button>` : ''}
-          ${podeVerPainel(user) ? `<button data-rota="#/escala">Escala</button>` : ''}
+          <button data-rota="#/escala">Escala</button>
         </div>
         <div class="user-chip">
           ${user.photoURL ? `<img src="${user.photoURL}" alt="" />` : ''}
@@ -78,7 +78,9 @@ function renderRotaAtual(user) {
 
   const rotaBase = rota.split('?')[0];
 
-  if ((rotaBase === '#/painel' || rotaBase === '#/escala') && !podeVerPainel(user)) {
+  // Escala Geral agora é aberta a qualquer técnica logada (@smartgr.com.br) —
+  // só o Painel de aprovação continua exclusivo de quem aprova.
+  if (rotaBase === '#/painel' && !podeVerPainel(user)) {
     navigate('#/');
     return;
   }

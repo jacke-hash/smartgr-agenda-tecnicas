@@ -205,10 +205,13 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Escala geral (grade semanal/diária da Julia) — não nasce de solicitação,
-    // não tem vendedor nem técnica "dona"; só quem aprova mexe.
+    // Escala geral (grade semanal/diária) — não nasce de solicitação, não
+    // tem vendedor nem técnica "dona". Aberta a qualquer @smartgr.com.br
+    // (todas as técnicas veem e editam a grade de todo mundo, igual a
+    // Julia sempre fez) — frontend/src/main.js não gateia mais essa rota
+    // por podeVerPainel.
     match /escalas/{id} {
-      allow read, write: if isAprovador();
+      allow read, write: if isSmartGRUser();
     }
   }
 }
