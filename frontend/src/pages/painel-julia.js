@@ -10,7 +10,7 @@ import {
   getDocs
 } from 'firebase/firestore';
 import { db } from '../firebase-config.js';
-import { notificarAprovacao, notificarRecusa, notificarTecnicaAdicionada } from '../utils/notificar.js';
+import { notificarAprovacao, notificarRecusa, notificarTecnicaAdicionada, notificarAlteracaoAgendamento } from '../utils/notificar.js';
 import { formatarDataBRComDiaSemana, formatarDataEscolhida } from '../utils/date-options.js';
 import { TAG_TIPO, formatDataHora } from '../utils/tipo-labels.js';
 
@@ -81,6 +81,10 @@ function renderInfoConsumidorFinal(item) {
 function formatarEnderecoResumido(endereco) {
   if (!endereco) return null;
   return `${endereco.rua}, ${endereco.numero} — ${endereco.bairro}, ${endereco.cidade}/${endereco.uf}`;
+}
+
+function escapeHtml(valor) {
+  return String(valor ?? '').replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[c]);
 }
 
 function renderInfoRevendaCliente(item) {
@@ -443,6 +447,7 @@ export function renderPainelJulia(container) {
               : ''
           }
           <div class="action-row">
+            <button type="button" class="btn btn-secondary" data-editar-agendamento="${item._id}">Editar data, horário e local</button>
             <button class="btn btn-approve" data-aprovar="${item._id}" ${aprovarBloqueado ? 'disabled' : ''}>Aprovar e atribuir</button>
             <button class="btn btn-decline" data-recusar="${item._id}">Recusar</button>
           </div>
@@ -508,6 +513,8 @@ export function renderPainelJulia(container) {
           ${
             item.status === 'aprovado'
               ? `
+          <div class="subhead">Agendamento</div>
+          <div class="action-row"><button type="button" class="btn btn-secondary" data-editar-agendamento="${item._id}">Editar data, horário e local</button></div>
           <div class="subhead">Trocar técnica</div>
           <div class="assign-row">
             <div class="field">
@@ -693,6 +700,7 @@ export function renderPainelJulia(container) {
             modalidade,
             endereco,
             unidade: item.unidade || null,
+            localAgendamento: item.localAgendamento || null,
             nomeSolicitante,
             dataHora: item.dataEscolhida,
             solicitacao: solicitacaoParaEmail
@@ -872,6 +880,7 @@ export function renderPainelJulia(container) {
             modalidade,
             endereco,
             unidade: item.unidade || null,
+            localAgendamento: item.localAgendamento || null,
             nomeSolicitante,
             dataHora: item.dataEscolhida,
             solicitacao: solicitacaoParaEmail
@@ -1038,6 +1047,7 @@ export function renderPainelJulia(container) {
             modalidade,
             endereco,
             unidade: item.unidade || null,
+            localAgendamento: item.localAgendamento || null,
             nomeSolicitante,
             dataHora,
             solicitacao: solicitacaoParaEmail
@@ -1093,6 +1103,7 @@ export function renderPainelJulia(container) {
               modalidade,
               endereco,
               unidade: item.unidade || null,
+              localAgendamento: item.localAgendamento || null,
               nomeSolicitante,
               dataHora,
               solicitacao: solicitacaoParaEmail
@@ -1123,6 +1134,7 @@ export function renderPainelJulia(container) {
         tecnicas: slotsPreenchidos.map((s) => ({ nome: s.tecnica?.nome || '—', email: s.tecnica?.email || null, meetLink: s.meetLink || null })),
         dataHora,
         endereco,
+        localAgendamento: item.localAgendamento || null,
         meetLink,
         solicitacao: solicitacaoParaEmail
       });
@@ -1153,6 +1165,109 @@ export function renderPainelJulia(container) {
         motivoRecusa: motivoLimpo
       });
     }
+  }
+
+  function dadosDeLocal(item) {
+    const revendaCliente = item.tipo === 'revenda' && item.destinoTreinamento === 'cliente_revenda';
+    const modalidade = item.tipo === 'workshop' ? 'presencial' : revendaCliente ? item.tipoTreinamentoCliente : item.modalidade;
+    const endereco = revendaCliente ? item.enderecoCliente || null : item.endereco || null;
+    const localPadrao = modalidade === 'online' ? 'Online' : item.unidade || formatarEnderecoResumido(endereco) || '';
+    return { modalidade, endereco, local: item.localAgendamento || localPadrao };
+  }
+
+  function abrirEdicaoAgendamento(item) {
+    const aprovado = item.status === 'aprovado';
+    const ehPeriodo = item.tipoReserva === 'periodo';
+    const opcoes = aprovado ? [item.dataEscolhida] : (item.opcoesData || []).filter((opcao) => ehPeriodo
+      ? opcao?.dataInicio && opcao?.dataFim && opcao?.horaInicio && opcao?.horaTermino
+      : opcao?.data && opcao?.horaInicio && opcao?.horaTermino);
+    if (!opcoes.length) {
+      window.alert('Não há uma data preenchida para editar.');
+      return;
+    }
+    const { modalidade, local } = dadosDeLocal(item);
+    const opcao = opcoes[0];
+    const camposData = ehPeriodo
+      ? `<div class="field-row"><div class="field"><label>Data de início</label><input required type="date" name="dataInicio" value="${escapeHtml(opcao.dataInicio)}"></div><div class="field"><label>Data de término</label><input required type="date" name="dataFim" value="${escapeHtml(opcao.dataFim)}"></div></div>
+         <div class="field-row"><div class="field"><label>Horário de início</label><input required type="time" name="horaInicio" value="${escapeHtml(opcao.horaInicio)}"></div><div class="field"><label>Horário de término</label><input required type="time" name="horaTermino" value="${escapeHtml(opcao.horaTermino)}"></div></div>`
+      : `<div class="field-row"><div class="field"><label>Data</label><input required type="date" name="data" value="${escapeHtml(opcao.data)}"></div><div class="field"><label>Horário de início</label><input required type="time" name="horaInicio" value="${escapeHtml(opcao.horaInicio)}"></div><div class="field"><label>Horário de término</label><input required type="time" name="horaTermino" value="${escapeHtml(opcao.horaTermino)}"></div></div>`;
+    const seletorOpcao = !aprovado && opcoes.length > 1
+      ? `<div class="field-row"><div class="field"><label>Opção de data a alterar</label><select name="opcao">${opcoes.map((_, i) => `<option value="${i}">Opção ${i + 1}</option>`).join('')}</select></div></div>` : '';
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<form class="modal-card" id="editar-agendamento-form"><h3>${aprovado ? 'Alterar agendamento aprovado' : 'Alterar dados antes da aprovação'}</h3><p>As alterações em um agendamento aprovado atualizam a agenda de todas as técnicas atribuídas e enviam um e-mail de aviso.</p>${seletorOpcao}${camposData}<div class="field-row"><div class="field"><label>Local</label><input name="local" ${modalidade === 'online' ? 'readonly' : 'required'} value="${escapeHtml(modalidade === 'online' ? 'Online' : local)}"></div></div><div id="editar-agendamento-msg"></div><div class="action-row"><button type="button" class="btn btn-secondary" data-cancelar>Cancelar</button><button class="btn btn-approve" type="submit">Salvar alteração</button></div></form>`;
+    document.body.appendChild(overlay);
+    const form = overlay.querySelector('form');
+    const preencherOpcao = (nova) => {
+      ['data', 'dataInicio', 'dataFim', 'horaInicio', 'horaTermino'].forEach((campoNome) => {
+        const input = form.elements[campoNome]; if (input && nova[campoNome] != null) input.value = nova[campoNome];
+      });
+    };
+    form.elements.opcao?.addEventListener('change', () => preencherOpcao(opcoes[Number(form.elements.opcao.value)]));
+    overlay.querySelector('[data-cancelar]').addEventListener('click', () => overlay.remove());
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const submit = form.querySelector('[type="submit"]');
+      const msg = form.querySelector('#editar-agendamento-msg');
+      const dataHora = ehPeriodo
+        ? { dataInicio: form.elements.dataInicio.value, dataFim: form.elements.dataFim.value, horaInicio: form.elements.horaInicio.value, horaTermino: form.elements.horaTermino.value }
+        : { data: form.elements.data.value, horaInicio: form.elements.horaInicio.value, horaTermino: form.elements.horaTermino.value };
+      if (ehPeriodo && dataHora.dataFim < dataHora.dataInicio) { msg.innerHTML = '<div class="error-note">A data de término não pode ser anterior à inicial.</div>'; return; }
+      submit.disabled = true; submit.textContent = 'Salvando...';
+      try {
+        await salvarAlteracaoAgendamento(item, dataHora, modalidade === 'online' ? 'Online' : form.elements.local.value.trim(), Number(form.elements.opcao?.value || 0));
+        overlay.remove();
+      } catch (err) {
+        msg.innerHTML = `<div class="error-note">${escapeHtml(err.message || 'Não foi possível salvar a alteração.')}</div>`;
+        submit.disabled = false; submit.textContent = 'Salvar alteração';
+      }
+    });
+  }
+
+  async function salvarAlteracaoAgendamento(item, dataHora, localAgendamento, indiceOpcao = 0) {
+    const aprovado = item.status === 'aprovado';
+    const { modalidade, endereco } = dadosDeLocal(item);
+    if (!aprovado) {
+      // Em espera, mantém as opções originais e substitui apenas a opção que
+      // estava aberta no editor; ela volta imediatamente para a fila.
+      const opcoesData = [...(item.opcoesData || [])];
+      const preenchidos = opcoesData.map((opcao, indice) => ({ opcao, indice })).filter(({ opcao }) => item.tipoReserva === 'periodo'
+        ? opcao?.dataInicio && opcao?.dataFim && opcao?.horaInicio && opcao?.horaTermino
+        : opcao?.data && opcao?.horaInicio && opcao?.horaTermino);
+      opcoesData[preenchidos[indiceOpcao]?.indice ?? 0] = dataHora;
+      await updateDoc(doc(db, item._colecao, item._id), { opcoesData, localAgendamento, alteradoEm: serverTimestamp() });
+      notificarAlteracaoAgendamento({
+        vendedorEmail: item.vendedorEmail,
+        vendedorNome: item.vendedor || item.vendedorAcompanha || '—',
+        tipo: item.tipo,
+        tipoReserva: item.tipoReserva || 'unico',
+        modalidade,
+        dataHora,
+        localAgendamento,
+        endereco,
+        tecnicas: []
+      });
+      return;
+    }
+    const slots = SUFIXOS_TECNICA.map((sufixo) => ({ sufixo, tecnicaId: item[campo('tecnicaAtribuida', sufixo)], eventId: item[campo('googleEventId', sufixo)] })).filter((s) => s.tecnicaId);
+    const calendarWorkerUrl = import.meta.env.VITE_CALENDAR_WORKER_URL;
+    if (calendarWorkerUrl && slots.length) {
+      const conflitoResp = await fetch(`${calendarWorkerUrl}/verificar-conflitos`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tecnicaIds: slots.map((s) => s.tecnicaId), opcoesData: [dataHora], tipoReserva: item.tipoReserva || 'unico', solicitacaoId: item._id }) });
+      const conflitoJson = await conflitoResp.json();
+      if (!conflitoResp.ok) throw new Error(conflitoJson.message || 'Não foi possível verificar a disponibilidade.');
+      const comConflito = slots.find((s) => { const status = conflitoJson.conflitos?.[s.tecnicaId]?.[0]; return status?.conflito || status?.folga; });
+      if (comConflito) throw new Error('A nova data ou horário conflita com a agenda de uma técnica atribuída.');
+    }
+    const { _id, _colecao, criadoEm, slaExpiraEm, aprovadoEm, status, opcoesData, dataEscolhida, ...solicitacao } = item;
+    const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
+    for (const slot of slots.filter((s) => s.eventId)) {
+      if (!calendarWorkerUrl) continue;
+      const resp = await fetch(`${calendarWorkerUrl}/atualizar-evento`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tecnicaId: slot.tecnicaId, eventId: slot.eventId, tipo: item.tipo, tipoTreinamento: item.tipoTreinamento || null, tipoReserva: item.tipoReserva || 'unico', modalidade, endereco, unidade: item.unidade || null, localAgendamento, nomeSolicitante, dataHora, solicitacao }) });
+      const resultado = await resp.json();
+      if (!resp.ok) throw new Error(resultado.message || 'Falha ao atualizar uma agenda.');
+    }
+    await updateDoc(doc(db, item._colecao, item._id), { dataEscolhida: dataHora, localAgendamento, alteradoEm: serverTimestamp() });
+    notificarAlteracaoAgendamento({ vendedorEmail: item.vendedorEmail, vendedorNome: nomeSolicitante, tipo: item.tipo, tipoReserva: item.tipoReserva || 'unico', modalidade, dataHora, localAgendamento, endereco, tecnicas: slots.map((s) => { const t = tecnicas.find((tecnica) => tecnica.id === s.tecnicaId); return { nome: t?.nome, email: item[campo('tecnicaEmail', s.sufixo)] || t?.email }; }) });
   }
 
   function renderFila() {
@@ -1186,6 +1301,10 @@ export function renderPainelJulia(container) {
           garantirEstadoHistorico(itemId).mostrarNovaTecnica = true;
           renderFila();
         });
+      });
+      queueEl.querySelectorAll('[data-editar-agendamento]').forEach((btn) => {
+        const item = itens.find((i) => i._id === btn.dataset.editarAgendamento);
+        btn.addEventListener('click', () => abrirEdicaoAgendamento(item));
       });
       return;
     }
@@ -1248,6 +1367,10 @@ export function renderPainelJulia(container) {
     queueEl.querySelectorAll('[data-recusar]').forEach((btn) => {
       const item = pendentes.find((p) => p._id === btn.dataset.recusar);
       btn.addEventListener('click', () => recusar(item));
+    });
+    queueEl.querySelectorAll('[data-editar-agendamento]').forEach((btn) => {
+      const item = pendentes.find((p) => p._id === btn.dataset.editarAgendamento);
+      btn.addEventListener('click', () => abrirEdicaoAgendamento(item));
     });
   }
 

@@ -178,6 +178,7 @@ async function handleNotificarAprovacao(request, env, headers) {
     tecnicas,
     dataHora,
     endereco,
+    localAgendamento,
     meetLink,
     solicitacao
   } = body;
@@ -192,7 +193,7 @@ async function handleNotificarAprovacao(request, env, headers) {
   }
 
   const tipoLabel = TIPO_LABEL[tipo] || tipo;
-  const local = modalidade === 'online' ? 'Online' : formatEndereco(endereco) || 'A confirmar';
+  const local = modalidade === 'online' ? 'Online' : localAgendamento || formatEndereco(endereco) || 'A confirmar';
   // DEBUG temporário: enquanto investigamos por que o link não estava
   // chegando, a linha aparece sempre que for online — mesmo vazio — pra dar
   // pra ver no próprio e-mail o que este worker recebeu de fato no body.
@@ -313,6 +314,24 @@ async function handleNotificarTecnicaAdicionada(request, env, headers) {
   return json({ status: 'ok' }, 200, headers);
 }
 
+async function handleNotificarAlteracaoAgendamento(request, env, headers) {
+  const { vendedorEmail, vendedorNome, tipo, tipoReserva, modalidade, dataHora, localAgendamento, endereco, tecnicas = [] } = await request.json();
+  if (!tipo || !dataHora) return json({ status: 'error', message: 'tipo e dataHora são obrigatórios' }, 400, headers);
+  const tipoLabel = TIPO_LABEL[tipo] || tipo;
+  const local = modalidade === 'online' ? 'Online' : localAgendamento || formatEndereco(endereco) || 'A confirmar';
+  const detalhes = '<ul><li><strong>Data:</strong> ' + formatarLinhaData(dataHora, tipoReserva) + '</li><li><strong>Local:</strong> ' + local + '</li></ul>';
+  if (vendedorEmail) {
+    const saudacao = vendedorNome ? 'Olá ' + vendedorNome + ',' : 'Olá,';
+    await enviarEmail(env, { to: vendedorEmail, subject: 'Alteração no treinamento — ' + tipoLabel, html: '<p>' + saudacao + '</p><p>Os dados do seu treinamento foram alterados.</p>' + detalhes });
+  }
+  for (const tecnica of tecnicas) {
+    if (!tecnica?.email) continue;
+    const saudacao = tecnica.nome ? 'Olá ' + tecnica.nome + ',' : 'Olá,';
+    await enviarEmail(env, { to: tecnica.email, subject: 'Alteração no treinamento atribuído — ' + tipoLabel, html: '<p>' + saudacao + '</p><p>A data, o horário ou o local de um treinamento atribuído a você foi alterado. Sua agenda já foi atualizada.</p>' + detalhes });
+  }
+  return json({ status: 'ok' }, 200, headers);
+}
+
 async function handleNotificarRecusaTecnica(request, env, headers) {
   const body = await request.json();
   const { tecnicaNome, tipo, tipoReserva, dataHora, motivo, vendedorNome, painelUrl } = body;
@@ -393,6 +412,9 @@ export default {
       }
       if (url.pathname === '/notificar-tecnica-adicionada' && request.method === 'POST') {
         return await handleNotificarTecnicaAdicionada(request, env, headers);
+      }
+      if (url.pathname === '/notificar-alteracao-agendamento' && request.method === 'POST') {
+        return await handleNotificarAlteracaoAgendamento(request, env, headers);
       }
     } catch (err) {
       console.error('erro não tratado:', err.stack || err.message || err);

@@ -170,14 +170,14 @@ function montarDescricaoEvento(tipo, tipoTreinamento, nomeSolicitante, solicitac
     .join('\n');
 }
 
-function montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, endereco, unidade, nomeSolicitante, dataHora, solicitacao }) {
+function montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, endereco, unidade, localAgendamento, nomeSolicitante, dataHora, solicitacao, incluirConference = true }) {
   const tipoLabel = TIPO_LABEL[tipo] || tipo;
   const ehPeriodo = tipoReserva === 'periodo';
   // Treinamento interno (consumidor_final) não tem endereço — o local é a
   // própria unidade SmartGR selecionada no formulário (ex: "Zona Sul"), não
   // um endereço de cliente. Sem isso, location caía sempre em "A confirmar"
   // mesmo já sabendo exatamente onde é.
-  const location = modalidade === 'online' ? 'Online' : unidade || formatEndereco(endereco) || 'A confirmar';
+  const location = modalidade === 'online' ? 'Online' : localAgendamento || unidade || formatEndereco(endereco) || 'A confirmar';
 
   return {
     summary: `Treinamento ${tipoLabel} — ${nomeSolicitante}`,
@@ -193,7 +193,7 @@ function montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, ender
     // pro próprio Calendar gerar (requestId só precisa ser único por
     // chamada, não persiste em lugar nenhum). Precisa do query param
     // conferenceDataVersion=1 na chamada da API pra isso ter efeito.
-    ...(modalidade === 'online'
+    ...(modalidade === 'online' && incluirConference
       ? { conferenceData: { createRequest: { requestId: crypto.randomUUID(), conferenceSolutionKey: { type: 'hangoutsMeet' } } } }
       : {})
   };
@@ -207,7 +207,7 @@ async function handleCriarEvento(request, env, headers) {
     return json({ status: 'error', message: 'body inválido' }, 400, headers);
   }
 
-  const { tecnicaId, tipo, tipoTreinamento, tipoReserva, modalidade, endereco, unidade, nomeSolicitante, dataHora, solicitacao } = body;
+  const { tecnicaId, tipo, tipoTreinamento, tipoReserva, modalidade, endereco, unidade, localAgendamento, nomeSolicitante, dataHora, solicitacao } = body;
   const ehPeriodo = tipoReserva === 'periodo';
   const camposDataOk = ehPeriodo
     ? Boolean(dataHora?.dataInicio && dataHora?.dataFim && dataHora?.horaInicio && dataHora?.horaTermino)
@@ -227,7 +227,7 @@ async function handleCriarEvento(request, env, headers) {
   const { access_token: accessToken } = await refreshAccessToken(env, refreshToken);
   console.log('criar-evento: access token obtido, chamando Calendar API...');
 
-  const eventBody = montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, endereco, unidade, nomeSolicitante, dataHora, solicitacao });
+  const eventBody = montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, endereco, unidade, localAgendamento, nomeSolicitante, dataHora, solicitacao });
 
   // conferenceDataVersion=1 é exigido pela API pra processar o
   // conferenceData/createRequest do eventBody (modalidade online) — sem
@@ -274,6 +274,28 @@ async function handleCriarEvento(request, env, headers) {
     }
   }
 
+  return json({ status: 'ok', eventId: evento.id, htmlLink: evento.htmlLink, meetLink: evento.hangoutLink || null }, 200, headers);
+}
+
+// PATCH preserva o Meet já criado ao corrigir data, horário ou local.
+async function handleAtualizarEvento(request, env, headers) {
+  const body = await request.json();
+  const { tecnicaId, eventId, tipo, tipoTreinamento, tipoReserva, modalidade, endereco, unidade, localAgendamento, nomeSolicitante, dataHora, solicitacao } = body;
+  const ehPeriodo = tipoReserva === 'periodo';
+  const camposDataOk = ehPeriodo
+    ? Boolean(dataHora?.dataInicio && dataHora?.dataFim && dataHora?.horaInicio && dataHora?.horaTermino)
+    : Boolean(dataHora?.data && dataHora?.horaInicio && dataHora?.horaTermino);
+  if (!tecnicaId || !eventId || !tipo || !nomeSolicitante || !camposDataOk) return json({ status: 'error', message: 'campos obrigatórios ausentes' }, 400, headers);
+  const tecnica = await getTecnica(env, tecnicaId);
+  if (!tecnica?.refreshTokenEncrypted) return json({ status: 'error', message: 'técnica ainda não conectou a agenda' }, 409, headers);
+  const refreshToken = await decryptSecret(tecnica.refreshTokenEncrypted, env.TOKEN_ENCRYPTION_KEY);
+  const { access_token: accessToken } = await refreshAccessToken(env, refreshToken);
+  const eventBody = montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, endereco, unidade, localAgendamento, nomeSolicitante, dataHora, solicitacao, incluirConference: false });
+  const resp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, {
+    method: 'PATCH', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(eventBody)
+  });
+  if (!resp.ok) return json({ status: 'error', message: `Falha ao atualizar evento: ${await resp.text()}` }, 502, headers);
+  const evento = await resp.json();
   return json({ status: 'ok', eventId: evento.id, htmlLink: evento.htmlLink, meetLink: evento.hangoutLink || null }, 200, headers);
 }
 
@@ -814,6 +836,15 @@ export default {
         return await handleCriarEvento(request, env, headers);
       } catch (err) {
         console.error('criar-evento: exceção não tratada:', err.stack || err.message || err);
+        return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
+      }
+    }
+
+    if (url.pathname === '/atualizar-evento' && request.method === 'POST') {
+      try {
+        return await handleAtualizarEvento(request, env, headers);
+      } catch (err) {
+        console.error('atualizar-evento: exceção não tratada:', err.stack || err.message || err);
         return json({ status: 'error', message: err.message || 'erro interno' }, 500, headers);
       }
     }

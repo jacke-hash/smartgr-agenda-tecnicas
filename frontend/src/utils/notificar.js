@@ -84,6 +84,18 @@ export async function notificarTecnicaAdicionada(payload) {
   }
 }
 
+export async function notificarAlteracaoAgendamento(payload) {
+  const workerUrl = import.meta.env.VITE_EMAIL_WORKER_URL;
+  if (!workerUrl) return;
+  try {
+    await fetch(`${workerUrl}/notificar-alteracao-agendamento`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+  } catch (err) {
+    console.error('Falha ao notificar alteração de agendamento por e-mail:', err);
+  }
+}
+
 export async function notificarRecusa({ vendedorEmail, vendedorNome, tipo, motivoRecusa }) {
   const workerUrl = import.meta.env.VITE_EMAIL_WORKER_URL;
   if (!workerUrl) return;
