@@ -160,14 +160,22 @@ service cloud.firestore {
     // expediente — fim de semana/feriado/fora 08:30-17:30, checado no
     // frontend em utils/expediente.js). Só pode zerar o slot que é dela
     // (tecnicaEmail{sufixo}/tecnicaAtribuida{sufixo}/googleEvent...{sufixo})
-    // e anexar o registro em recusasTecnica — nada mais no documento pode
-    // mudar nessa via. Qualquer outra alteração (reatribuir, mudar status,
-    // opcoesData etc.) continua exclusiva da Julia.
+    // e anexar o registro em recusasTecnica. Quando a última técnica recusa,
+    // a solicitação pode voltar para pendente; se outra ainda está atribuída,
+    // ela segue aprovada. Qualquer outra alteração continua exclusiva da Julia.
+    function todosSlotsSemTecnica(dados) {
+      return (!('tecnicaAtribuida' in dados) || dados.tecnicaAtribuida == null)
+        && (!('tecnicaAtribuida2' in dados) || dados.tecnicaAtribuida2 == null)
+        && (!('tecnicaAtribuida3' in dados) || dados.tecnicaAtribuida3 == null)
+        && (!('tecnicaAtribuida4' in dados) || dados.tecnicaAtribuida4 == null)
+        && (!('tecnicaAtribuida5' in dados) || dados.tecnicaAtribuida5 == null);
+    }
+
     function recusaValidaDoSlot(dadosAntigos, dadosNovos, sufixo, chaves) {
       return ehDonaDoSlot(dadosAntigos, sufixo)
         && chaves.hasOnly([
           'tecnicaAtribuida' + sufixo, 'tecnicaEmail' + sufixo,
-          'googleEventId' + sufixo, 'googleEventLink' + sufixo, 'googleMeetLink' + sufixo,
+          'googleEventId' + sufixo, 'googleEventLink' + sufixo, 'googleMeetLink' + sufixo, 'status',
           'recusasTecnica'
         ])
         && dadosNovos['tecnicaEmail' + sufixo] == null
@@ -177,7 +185,8 @@ service cloud.firestore {
     function recusaValidaDaTecnica(dadosAntigos, dadosNovos) {
       let chaves = request.resource.data.diff(resource.data).affectedKeys();
       return isSmartGRUser()
-        && dadosAntigos.status == 'aprovado' && dadosNovos.status == 'aprovado'
+        && dadosAntigos.status == 'aprovado'
+        && (dadosNovos.status == 'aprovado' || (dadosNovos.status == 'pendente' && todosSlotsSemTecnica(dadosNovos)))
         && (
           recusaValidaDoSlot(dadosAntigos, dadosNovos, '', chaves) ||
           recusaValidaDoSlot(dadosAntigos, dadosNovos, '2', chaves) ||

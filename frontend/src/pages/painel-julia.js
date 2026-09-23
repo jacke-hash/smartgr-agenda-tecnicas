@@ -483,6 +483,7 @@ export function renderPainelJulia(container) {
     // clicar em "+ Adicionar nova técnica" (aí revela só o próximo livre).
     const slotsExtrasOcupados = SUFIXOS_TECNICA.map((suf, i) => ({ i, sufixo: suf, tecnicaId: item[campo('tecnicaAtribuida', suf)] }))
       .filter((s) => s.i > 0 && s.tecnicaId);
+    const semTecnicaAtribuida = !item.tecnicaAtribuida && slotsExtrasOcupados.length === 0;
     const proximoSlotLivreIdx = SUFIXOS_TECNICA.findIndex((suf, i) => i > 0 && !item[campo('tecnicaAtribuida', suf)]);
     const dataHora = formatarDataEscolhida(item);
     const statusLabel = item.status === 'aprovado' ? 'Aprovada' : 'Recusada';
@@ -525,6 +526,7 @@ export function renderPainelJulia(container) {
           ${
             item.status === 'aprovado'
               ? `
+          ${semTecnicaAtribuida ? `<div class="error-note">Este treinamento está sem técnica atribuída.</div><div class="action-row"><button type="button" class="btn btn-approve" data-reabrir-pendente="${item._id}">Mover para pendentes</button></div>` : ''}
           <div class="subhead">Agendamento</div>
           <div class="action-row"><button type="button" class="btn btn-secondary" data-editar-agendamento="${item._id}">Editar data, horário e local</button></div>
           <div class="subhead">Trocar técnica</div>
@@ -1328,6 +1330,14 @@ export function renderPainelJulia(container) {
       queueEl.querySelectorAll('[data-editar-agendamento]').forEach((btn) => {
         const item = itens.find((i) => i._id === btn.dataset.editarAgendamento);
         btn.addEventListener('click', () => abrirEdicaoAgendamento(item));
+      });
+      queueEl.querySelectorAll('[data-reabrir-pendente]').forEach((btn) => {
+        const item = itens.find((i) => i._id === btn.dataset.reabrirPendente);
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          await updateDoc(doc(db, item._colecao, item._id), { status: 'pendente', reabertoEm: serverTimestamp() });
+          await carregarHistorico(abaAtiva);
+        });
       });
       return;
     }

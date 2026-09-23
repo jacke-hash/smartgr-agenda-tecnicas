@@ -180,11 +180,9 @@ export function renderMinhasSolicitacoes(container, navigate, user) {
     });
   }
 
-  // Recusa só o SEU pedaço do treinamento: se havia outras técnicas, elas
-  // continuam com os eventos delas intactos (evento próprio por técnica —
-  // mesmo padrão já usado pra Nayra em painel-julia.js). Sem promover
-  // ninguém pro lugar vazio automaticamente — a Julia reatribui pela aba
-  // "Aprovadas" do painel dela, igual já faz hoje pra qualquer troca.
+  // Recusa só o SEU pedaço do treinamento. Se era a última técnica, a
+  // solicitação volta à fila da Julia (pendente) para uma nova atribuição;
+  // se ainda há colegas atribuídas, segue aprovada normalmente.
   async function recusarComoTecnica(item, btnEl) {
     const msgEl = container.querySelector(`#msg-recusar-${item._id}`);
     msgEl.innerHTML = '';
@@ -222,10 +220,14 @@ export function renderMinhasSolicitacoes(container, navigate, user) {
       [campo('googleEventLink', sufixo)]: null,
       [campo('googleMeetLink', sufixo)]: null
     };
+    const existeOutraTecnica = SUFIXOS_TECNICA.some((outroSufixo) =>
+      outroSufixo !== sufixo && Boolean(item[campo('tecnicaAtribuida', outroSufixo)])
+    );
 
     try {
       await updateDoc(doc(db, item._colecao, item._id), {
         ...camposSlot,
+        status: existeOutraTecnica ? 'aprovado' : 'pendente',
         recusasTecnica: arrayUnion({
           tecnicaNome: user.displayName || user.email,
           tecnicaEmail: user.email,
