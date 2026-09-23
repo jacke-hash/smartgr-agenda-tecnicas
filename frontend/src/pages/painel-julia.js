@@ -141,7 +141,8 @@ function renderInfoWorkshop(item) {
 
 const ABAS = [
   { id: 'pendente', label: 'Pendentes' },
-  { id: 'aprovado', label: 'Aprovadas' },
+  { id: 'proximo', label: 'Próximos' },
+  { id: 'realizado', label: 'Já realizados' },
   { id: 'recusado', label: 'Recusadas' }
 ];
 
@@ -162,7 +163,7 @@ export function renderPainelJulia(container) {
 
   let tecnicas = [];
   let porColecao = {};
-  const historico = { aprovado: [], recusado: [] };
+  const historico = { proximo: [], realizado: [], recusado: [] };
   const estadoUi = {};
   const estadoHistoricoUi = {};
   let unsubscribes = [];
@@ -182,6 +183,17 @@ export function renderPainelJulia(container) {
         const dbb = b.criadoEm?.toMillis ? b.criadoEm.toMillis() : 0;
         return da - dbb;
       });
+  }
+
+  // A data final determina em qual visão um período aparece. Assim, um
+  // treinamento de vários dias só migra para "Já realizados" depois de
+  // terminar. Hoje ainda é um compromisso futuro/em andamento.
+  function dataFinalDoAgendamento(item) {
+    return item.dataEscolhida?.dataFim || item.dataEscolhida?.data || '';
+  }
+
+  function hojeEmSaoPaulo() {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   }
 
   function garantirEstado(item) {
@@ -940,19 +952,30 @@ export function renderPainelJulia(container) {
     btnEl.textContent = 'Salvar';
   }
 
-  async function carregarHistorico(status) {
+  async function carregarHistorico(aba) {
     queueEl.innerHTML = `<div class="loading-state">Carregando...</div>`;
+    const status = aba === 'recusado' ? 'recusado' : 'aprovado';
     const listas = await Promise.all(
       COLECOES.map(async (colecaoNome) => {
         const snap = await getDocs(query(collection(db, colecaoNome), where('status', '==', status)));
         return snap.docs.map((d) => ({ _id: d.id, _colecao: colecaoNome, ...d.data() }));
       })
     );
-    historico[status] = listas.flat().sort((a, b) => {
-      const da = a.aprovadoEm?.toMillis ? a.aprovadoEm.toMillis() : 0;
-      const dbb = b.aprovadoEm?.toMillis ? b.aprovadoEm.toMillis() : 0;
-      return dbb - da;
-    });
+    const itens = listas.flat();
+    if (aba === 'proximo' || aba === 'realizado') {
+      const hoje = hojeEmSaoPaulo();
+      historico[aba] = itens
+        .filter((item) => aba === 'proximo' ? dataFinalDoAgendamento(item) >= hoje : dataFinalDoAgendamento(item) < hoje)
+        .sort((a, b) => aba === 'proximo'
+          ? dataFinalDoAgendamento(a).localeCompare(dataFinalDoAgendamento(b))
+          : dataFinalDoAgendamento(b).localeCompare(dataFinalDoAgendamento(a)));
+    } else {
+      historico[aba] = itens.sort((a, b) => {
+        const da = a.aprovadoEm?.toMillis ? a.aprovadoEm.toMillis() : 0;
+        const dbb = b.aprovadoEm?.toMillis ? b.aprovadoEm.toMillis() : 0;
+        return dbb - da;
+      });
+    }
     renderFila();
   }
 
@@ -1275,7 +1298,7 @@ export function renderPainelJulia(container) {
       const itens = historico[abaAtiva] || [];
       queueEl.innerHTML =
         itens.length === 0
-          ? `<div class="empty-state">Nenhuma solicitação ${abaAtiva === 'aprovado' ? 'aprovada' : 'recusada'} ainda.</div>`
+          ? `<div class="empty-state">${abaAtiva === 'proximo' ? 'Nenhum treinamento próximo.' : abaAtiva === 'realizado' ? 'Nenhum treinamento já realizado.' : 'Nenhuma solicitação recusada ainda.'}</div>`
           : itens.map((item) => renderCardHistorico(item)).join('');
 
       queueEl.querySelectorAll('[data-reatribuir-salvar]').forEach((btn) => {
