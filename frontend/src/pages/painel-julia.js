@@ -6,6 +6,7 @@ import {
   onSnapshot,
   doc,
   updateDoc,
+  addDoc,
   serverTimestamp,
   getDocs
 } from 'firebase/firestore';
@@ -28,6 +29,22 @@ const ORDINAL_TECNICA = ['1ª', '2ª', '3ª', '4ª', '5ª'];
 
 function campo(nomeBase, sufixo) {
   return `${nomeBase}${sufixo}`;
+}
+
+// Log de alterações em subcoleção própria — não sobrescreve, só acumula.
+// Sem login no painel ainda, então "origem" fica genérico (painel-julia);
+// dá pra evoluir pra e-mail de quem fez assim que tiver autenticação.
+async function registrarHistorico(item, acao, detalhes = {}) {
+  try {
+    await addDoc(collection(db, item._colecao, item._id, 'historico'), {
+      em: serverTimestamp(),
+      acao,
+      origem: 'painel-julia',
+      ...detalhes
+    });
+  } catch (err) {
+    console.error(`historico: falha ao registrar "${acao}", seguindo mesmo assim:`, err.message);
+  }
 }
 
 function formatCountdown(slaExpiraEm) {
@@ -746,12 +763,37 @@ export function renderPainelJulia(container) {
       googleEventLink: googleEventLinkNovo,
       googleMeetLink: googleMeetLinkNovo
     });
+    const tecnicaAntigaNome = tecnicas.find((t) => t.id === tecnicaAntigaId)?.nome || null;
+    registrarHistorico(item, 'reatribuicao_tecnica', {
+      tecnicaAntigaId: tecnicaAntigaId || null,
+      tecnicaAntigaNome,
+      tecnicaNovaId: novoTecnicaId,
+      tecnicaNovaNome: novaTecnica?.nome || null
+    });
 
     item.tecnicaAtribuida = novoTecnicaId;
     item.tecnicaEmail = novaTecnica?.email || null;
     item.googleEventId = googleEventIdNovo;
     item.googleEventLink = googleEventLinkNovo;
     item.googleMeetLink = googleMeetLinkNovo;
+
+    // Sem isso a técnica nova nunca fica sabendo que o treinamento é dela —
+    // só o Calendar mostrava o evento (sem e-mail nenhum avisando a troca).
+    if (novaTecnica?.email) {
+      notificarTecnicaAdicionada({
+        tecnicaEmail: novaTecnica.email,
+        tecnicaNome: novaTecnica.nome,
+        tipo: item.tipo,
+        tipoTreinamento: item.tipoTreinamento || null,
+        tipoReserva: item.tipoReserva || 'unico',
+        modalidade,
+        dataHora: item.dataEscolhida,
+        endereco,
+        meetLink: googleMeetLinkNovo,
+        vendedorNome: nomeSolicitante,
+        solicitacao: solicitacaoParaEmail
+      });
+    }
 
     msgEl.innerHTML = `<div class="success-note">Reatribuído para ${novaTecnica?.nome || 'nova técnica'} com sucesso.</div>`;
     btnEl.disabled = false;
@@ -808,6 +850,11 @@ export function renderPainelJulia(container) {
       };
       await updateDoc(doc(db, item._colecao, item._id), camposLimpos);
       Object.assign(item, camposLimpos);
+      registrarHistorico(item, 'remocao_tecnica_slot', {
+        slot: sufixo || '1',
+        tecnicaRemovidaId: tecnicaAntigaId || null,
+        tecnicaRemovidaNome: tecnicas.find((t) => t.id === tecnicaAntigaId)?.nome || null
+      });
       msgEl.innerHTML = `<div class="success-note">${ordinal} técnica removida.</div>`;
       btnEl.disabled = false;
       btnEl.textContent = 'Atribuir';
@@ -928,6 +975,13 @@ export function renderPainelJulia(container) {
     };
     await updateDoc(doc(db, item._colecao, item._id), camposNovos);
     Object.assign(item, camposNovos);
+    registrarHistorico(item, tecnicaAntigaId ? 'troca_tecnica_slot' : 'adicao_tecnica_slot', {
+      slot: sufixo || '1',
+      tecnicaAntigaId: tecnicaAntigaId || null,
+      tecnicaAntigaNome: tecnicas.find((t) => t.id === tecnicaAntigaId)?.nome || null,
+      tecnicaNovaId: novoTecnicaId,
+      tecnicaNovaNome: novaTecnica?.nome || null
+    });
 
     if (novaTecnica?.email) {
       notificarTecnicaAdicionada({
@@ -964,6 +1018,19 @@ export function renderPainelJulia(container) {
       })
     );
     const itens = listas.flat();
+    // Corrige automaticamente solicitações recusadas antes da mudança de
+    // regra. Quando Julia abrir Próximos/Já realizados, elas reaparecem em
+    // Pendentes sem depender de um botão manual.
+    if (status === 'aprovado') {
+      const recusadasPorTecnica = itens.filter((item) => (item.recusasTecnica || []).length > 0);
+      if (recusadasPorTecnica.length) {
+        await Promise.all(recusadasPorTecnica.map((item) => {
+          registrarHistorico(item, 'reabertura_automatica', { motivo: 'recusa_tecnica_apos_mudanca_regra' });
+          return updateDoc(doc(db, item._colecao, item._id), { status: 'pendente', reabertoEm: serverTimestamp() });
+        }));
+        return carregarHistorico(aba);
+      }
+    }
     if (aba === 'proximo' || aba === 'realizado') {
       const hoje = hojeEmSaoPaulo();
       historico[aba] = itens
@@ -1028,6 +1095,10 @@ export function renderPainelJulia(container) {
     });
 
     await updateDoc(doc(db, item._colecao, item._id), payload);
+    registrarHistorico(item, 'aprovacao', {
+      dataHora,
+      tecnicas: slotsPreenchidos.map((s) => ({ slot: s.sufixo || '1', tecnicaId: s.tid, tecnicaNome: s.tecnica?.nome || null }))
+    });
 
     const nomeSolicitante = item.vendedor || item.vendedorAcompanha || '—';
     // Revenda "cliente da revenda" guarda modalidade/endereço em campos
@@ -1145,7 +1216,7 @@ export function renderPainelJulia(container) {
     }
 
     if (item.vendedorEmail) {
-      notificarAprovacao({
+      const resultadoEmail = await notificarAprovacao({
         vendedorEmail: item.vendedorEmail,
         vendedorNome: nomeSolicitante,
         tipo: item.tipo,
@@ -1162,6 +1233,13 @@ export function renderPainelJulia(container) {
         localAgendamento: item.localAgendamento || null,
         meetLink,
         solicitacao: solicitacaoParaEmail
+      });
+      if (!resultadoEmail.ok) {
+        msgEl.innerHTML += `<div class="error-note">Aprovado, mas falha ao enviar e-mail de aprovação (vendedor/técnicas): ${resultadoEmail.message || 'erro desconhecido'}</div>`;
+      }
+      registrarHistorico(item, resultadoEmail.ok ? 'email_aprovacao_enviado' : 'falha_email_aprovacao', {
+        destinatarios: [item.vendedorEmail, ...slotsPreenchidos.map((s) => s.tecnica?.email).filter(Boolean)],
+        erro: resultadoEmail.ok ? null : resultadoEmail.message || 'erro desconhecido'
       });
     }
   }
@@ -1181,6 +1259,7 @@ export function renderPainelJulia(container) {
       motivoRecusa: motivoLimpo,
       aprovadoEm: serverTimestamp()
     });
+    registrarHistorico(item, 'recusa', { motivo: motivoLimpo });
 
     if (item.vendedorEmail) {
       notificarRecusa({
@@ -1261,6 +1340,7 @@ export function renderPainelJulia(container) {
         : opcao?.data && opcao?.horaInicio && opcao?.horaTermino);
       opcoesData[preenchidos[indiceOpcao]?.indice ?? 0] = dataHora;
       await updateDoc(doc(db, item._colecao, item._id), { opcoesData, localAgendamento, alteradoEm: serverTimestamp() });
+      registrarHistorico(item, 'alteracao_data_pendente', { dataHoraNova: dataHora, localAgendamentoNovo: localAgendamento });
       notificarAlteracaoAgendamento({
         vendedorEmail: item.vendedorEmail,
         vendedorNome: item.vendedor || item.vendedorAcompanha || '—',
@@ -1292,6 +1372,11 @@ export function renderPainelJulia(container) {
       if (!resp.ok) throw new Error(resultado.message || 'Falha ao atualizar uma agenda.');
     }
     await updateDoc(doc(db, item._colecao, item._id), { dataEscolhida: dataHora, localAgendamento, alteradoEm: serverTimestamp() });
+    registrarHistorico(item, 'reagendamento', {
+      dataHoraAntiga: item.dataEscolhida || null,
+      dataHoraNova: dataHora,
+      localAgendamentoNovo: localAgendamento
+    });
     notificarAlteracaoAgendamento({ vendedorEmail: item.vendedorEmail, vendedorNome: nomeSolicitante, tipo: item.tipo, tipoReserva: item.tipoReserva || 'unico', modalidade, dataHora, localAgendamento, endereco, tecnicas: slots.map((s) => { const t = tecnicas.find((tecnica) => tecnica.id === s.tecnicaId); return { nome: t?.nome, email: item[campo('tecnicaEmail', s.sufixo)] || t?.email }; }) });
   }
 
@@ -1335,6 +1420,7 @@ export function renderPainelJulia(container) {
         const item = itens.find((i) => i._id === btn.dataset.reabrirPendente);
         btn.addEventListener('click', async () => {
           btn.disabled = true;
+          registrarHistorico(item, 'reabertura_manual', {});
           await updateDoc(doc(db, item._colecao, item._id), { status: 'pendente', reabertoEm: serverTimestamp() });
           await carregarHistorico(abaAtiva);
         });

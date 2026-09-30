@@ -158,10 +158,11 @@ async function handleOauthCallback(url, env, headers) {
   }
 }
 
-function montarDescricaoEvento(tipo, tipoTreinamento, nomeSolicitante, solicitacao) {
+function montarDescricaoEvento(tipo, tipoTreinamento, modalidade, nomeSolicitante, solicitacao) {
   const tipoLabel = TIPO_LABEL[tipo] || tipo;
   return [
     `Tipo: ${tipoLabel}`,
+    modalidade ? `Modalidade: ${modalidade === 'online' ? 'Online' : 'Presencial'}` : null,
     tipoTreinamento ? `Treinamento: ${tipoTreinamento === 'interno' ? 'Interno' : 'Externo'}` : null,
     `Solicitante: ${nomeSolicitante}`,
     ...formatarDescricaoSolicitacao(tipo, solicitacao)
@@ -179,9 +180,11 @@ function montarEventBody({ tipo, tipoTreinamento, tipoReserva, modalidade, ender
   // mesmo já sabendo exatamente onde é.
   const location = modalidade === 'online' ? 'Online' : localAgendamento || unidade || formatEndereco(endereco) || 'A confirmar';
 
+  const modalidadeLabel = modalidade === 'online' ? 'Online' : 'Presencial';
+
   return {
-    summary: `Treinamento ${tipoLabel} — ${nomeSolicitante}`,
-    description: montarDescricaoEvento(tipo, tipoTreinamento, nomeSolicitante, solicitacao),
+    summary: `Treinamento ${tipoLabel} (${modalidadeLabel}) — ${nomeSolicitante}`,
+    description: montarDescricaoEvento(tipo, tipoTreinamento, modalidade, nomeSolicitante, solicitacao),
     location,
     start: ehPeriodo
       ? { dateTime: `${dataHora.dataInicio}T${dataHora.horaInicio}:00`, timeZone: 'America/Sao_Paulo' }

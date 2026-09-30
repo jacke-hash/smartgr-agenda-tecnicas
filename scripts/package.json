@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "seed:tecnicas": "node seed-tecnicas.mjs"
+    "seed:tecnicas": "node seed-tecnicas.mjs",
+    "atualizar-eventos-modalidade": "node atualizar-eventos-modalidade.mjs"
   },
   "dependencies": {
     "firebase-admin": "^12.3.1"

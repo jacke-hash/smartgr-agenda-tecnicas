@@ -18,18 +18,31 @@ export async function notificarNovaSolicitacao(tipo, resumo, { copiaThayla = fal
   }
 }
 
+// Antes só disparava e ignorava o resultado — o worker manda um e-mail por
+// destinatário (vendedor, Nayra condicional, cada técnica) na mesma
+// requisição, e se o Resend rejeitar qualquer um deles no meio do loop, o
+// worker responde 500 mas o fetch em si não falha, então nada aparecia (nem
+// console.error, nem aviso pra Julia). Retorna {ok, message} pra quem chama
+// poder tratar a falha em vez de ela sumir.
 export async function notificarAprovacao(payload) {
   const workerUrl = import.meta.env.VITE_EMAIL_WORKER_URL;
-  if (!workerUrl) return;
+  if (!workerUrl) return { ok: true };
 
   try {
-    await fetch(`${workerUrl}/notificar-aprovacao`, {
+    const resp = await fetch(`${workerUrl}/notificar-aprovacao`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    if (!resp.ok) {
+      const erro = await resp.json().catch(() => ({}));
+      console.error('Falha ao notificar aprovação por e-mail:', erro.message || resp.status);
+      return { ok: false, message: erro.message || `HTTP ${resp.status}` };
+    }
+    return { ok: true };
   } catch (err) {
     console.error('Falha ao notificar aprovação por e-mail:', err);
+    return { ok: false, message: err.message };
   }
 }
 

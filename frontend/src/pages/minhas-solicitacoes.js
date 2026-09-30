@@ -180,9 +180,8 @@ export function renderMinhasSolicitacoes(container, navigate, user) {
     });
   }
 
-  // Recusa só o SEU pedaço do treinamento. Se era a última técnica, a
-  // solicitação volta à fila da Julia (pendente) para uma nova atribuição;
-  // se ainda há colegas atribuídas, segue aprovada normalmente.
+  // Qualquer recusa reabre a solicitação para a Julia revisar a escala e
+  // atribuir novamente, mesmo quando havia mais técnicas no evento.
   async function recusarComoTecnica(item, btnEl) {
     const msgEl = container.querySelector(`#msg-recusar-${item._id}`);
     msgEl.innerHTML = '';
@@ -220,14 +219,10 @@ export function renderMinhasSolicitacoes(container, navigate, user) {
       [campo('googleEventLink', sufixo)]: null,
       [campo('googleMeetLink', sufixo)]: null
     };
-    const existeOutraTecnica = SUFIXOS_TECNICA.some((outroSufixo) =>
-      outroSufixo !== sufixo && Boolean(item[campo('tecnicaAtribuida', outroSufixo)])
-    );
-
     try {
       await updateDoc(doc(db, item._colecao, item._id), {
         ...camposSlot,
-        status: existeOutraTecnica ? 'aprovado' : 'pendente',
+        status: 'pendente',
         recusasTecnica: arrayUnion({
           tecnicaNome: user.displayName || user.email,
           tecnicaEmail: user.email,
